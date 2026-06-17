@@ -1,0 +1,10 @@
+node_modules
+dist
+.env
+.DS_Store
+server/data/db.json
+server/uploads/*
+!server/uploads/.gitkeep
+!server/uploads/covers
+server/uploads/covers/*
+!server/uploads/covers/.gitkeep
