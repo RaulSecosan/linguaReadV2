@@ -1,5 +1,5 @@
 import express from "express";
-import { readDb } from "../services/db.js";
+import { mutateDb, readDb } from "../services/db.js";
 import { buildCoach, difficultyForText, summarizeText, translateContext } from "../services/aiService.js";
 import { computeStatistics } from "../services/statistics.js";
 
@@ -20,11 +20,35 @@ router.post("/summary", async (request, response) => {
   const data = await readDb();
   const book = data.books.find((item) => item.id === request.body.bookId);
   if (!book) return response.status(404).json({ error: "Cartea nu a fost gasita." });
-  const selectedText = typeof request.body.text === "string" && request.body.text.trim()
-    ? request.body.text
-    : book.text;
-  const result = await summarizeText({ text: selectedText, model: request.body.model });
-  response.json(result);
+  const chapter = book.chapters?.find((item) => item.id === request.body.chapterId);
+  if (!chapter) return response.status(404).json({ error: "Capitolul nu a fost gasit." });
+  const cacheKey = request.body.model === "ollama" ? "ollama" : "gpt";
+  const cached = book.summaries?.[chapter.id]?.[cacheKey];
+  if (cached) return response.json({ ...cached, cached: true });
+
+  const chapterText = Array.isArray(book.sourcePages)
+    ? book.sourcePages.slice(chapter.startPage, chapter.endPage + 1).join("\n\n")
+    : chapter.text;
+
+  try {
+    const result = await summarizeText({
+      text: chapterText,
+      model: request.body.model,
+      chapterTitle: chapter.title,
+    });
+    await mutateDb((nextData) => {
+      const storedBook = nextData.books.find((item) => item.id === book.id);
+      storedBook.summaries ||= {};
+      storedBook.summaries[chapter.id] ||= {};
+      storedBook.summaries[chapter.id][cacheKey] = {
+        ...result,
+        generatedAt: new Date().toISOString(),
+      };
+    });
+    response.json(result);
+  } catch (error) {
+    response.status(error.status || 500).json({ error: error.message || "Rezumatul nu a putut fi generat." });
+  }
 });
 
 router.post("/difficulty", async (request, response) => {

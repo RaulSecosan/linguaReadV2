@@ -17,11 +17,12 @@ import {
   Settings,
   Sparkles,
   Sun,
+  Trash2,
   Upload,
   Volume2,
 } from "lucide-react";
 import React from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE, api } from "./api";
 
 const navigation = [
@@ -415,19 +416,29 @@ function Reader({ book, vocabulary, onRefresh, onNotice }) {
   const [fontFamily, setFontFamily] = useState(() => localStorage.getItem("lr-font") || fontOptions[0].value);
   const [pageWidth, setPageWidth] = useState(() => Number(localStorage.getItem("lr-page-width")) || 760);
   const [selected, setSelected] = useState(null);
-  const [model, setModel] = useState("gpt");
+  const [model, setModel] = useState(() => localStorage.getItem("lr-ai-model") || "gpt");
   const [translation, setTranslation] = useState(null);
   const [translationError, setTranslationError] = useState("");
   const [summary, setSummary] = useState(null);
   const [difficulty, setDifficulty] = useState(null);
   const [busy, setBusy] = useState("");
   const [currentPage, setCurrentPage] = useState(0);
+  const tocListRef = useRef(null);
+  const activeTocRef = useRef(null);
 
   const wordsPerPage = Math.max(180, Math.round(430 * (pageWidth / 760) * (18 / fontSize)));
   const pagination = useMemo(() => paginateBook(book, wordsPerPage), [book, wordsPerPage]);
   const page = pagination.pages[currentPage] || pagination.pages[0];
   const sentences = useMemo(() => splitSentences(page?.text), [page?.text]);
   const highlighted = useMemo(() => new Set(vocabulary.map((item) => normalizeWord(item.word))), [vocabulary]);
+  const selectedVocabulary = useMemo(
+    () => vocabulary.find((item) => normalizeWord(item.word) === normalizeWord(selected?.word || "")),
+    [selected?.word, vocabulary],
+  );
+  const activeChapter = useMemo(
+    () => [...pagination.contents].reverse().find((chapter) => currentPage >= chapter.page),
+    [currentPage, pagination.contents],
+  );
   const progressPercent = pagination.pages.length
     ? Math.round(((currentPage + 1) / pagination.pages.length) * 100)
     : 0;
@@ -437,7 +448,8 @@ function Reader({ book, vocabulary, onRefresh, onNotice }) {
     localStorage.setItem("lr-font-size", String(fontSize));
     localStorage.setItem("lr-font", fontFamily);
     localStorage.setItem("lr-page-width", String(pageWidth));
-  }, [theme, fontSize, fontFamily, pageWidth]);
+    localStorage.setItem("lr-ai-model", model);
+  }, [theme, fontSize, fontFamily, pageWidth, model]);
 
   useEffect(() => {
     setSelected(null);
@@ -490,6 +502,18 @@ function Reader({ book, vocabulary, onRefresh, onNotice }) {
     }
   }, [currentPage, pagination.pages.length]);
 
+  useEffect(() => {
+    const list = tocListRef.current;
+    const active = activeTocRef.current;
+    if (!list || !active) return;
+    const top = active.offsetTop;
+    const bottom = top + active.offsetHeight;
+    if (top < list.scrollTop) list.scrollTop = Math.max(0, top - 8);
+    if (bottom > list.scrollTop + list.clientHeight) {
+      list.scrollTop = bottom - list.clientHeight + 12;
+    }
+  }, [activeChapter?.id]);
+
   if (!book) return <div className="empty-state">Alege sau incarca o carte.</div>;
 
   const addBookmark = async () => {
@@ -517,10 +541,18 @@ function Reader({ book, vocabulary, onRefresh, onNotice }) {
     onNotice(`"${selected.word}" a fost salvat in vocabular.`);
   };
 
+  const removeVocabulary = async () => {
+    if (!selectedVocabulary) return;
+    await api.deleteVocabulary(selectedVocabulary.id);
+    await onRefresh();
+    onNotice(`"${selectedVocabulary.word}" a fost eliminat din vocabular.`);
+  };
+
   const loadSummary = async () => {
     setBusy("summary");
+    setSummary(null);
     api
-      .summary({ bookId: book.id, text: page?.text, chapterTitle: page?.chapterTitle })
+      .summary({ bookId: book.id, chapterId: activeChapter?.id, model })
       .then(setSummary)
       .catch((error) => onNotice(error.message))
       .finally(() => setBusy(""));
@@ -543,6 +575,13 @@ function Reader({ book, vocabulary, onRefresh, onNotice }) {
     setTranslationError("");
     setSummary(null);
     saveProgress(safePage);
+  };
+
+  const changeModel = (nextModel) => {
+    setModel(nextModel);
+    setTranslation(null);
+    setTranslationError("");
+    setSummary(null);
   };
 
   return (
@@ -569,13 +608,21 @@ function Reader({ book, vocabulary, onRefresh, onNotice }) {
           Latime
           <input min="560" max="980" value={pageWidth} onChange={(event) => setPageWidth(Number(event.target.value))} type="range" />
         </label>
+        <label className="ai-model-selector">
+          <Sparkles size={16} />
+          <span>Motor AI</span>
+          <select value={model} onChange={(event) => changeModel(event.target.value)}>
+            <option value="gpt">ChatGPT API</option>
+            <option value="ollama">Mistral local</option>
+          </select>
+        </label>
         <button className="secondary-button" onClick={addBookmark}>
           <Bookmark size={16} />
           Bookmark
         </button>
-        <button className="secondary-button" onClick={loadSummary}>
+        <button className="secondary-button" onClick={loadSummary} disabled={busy === "summary"}>
           <Sparkles size={16} />
-          Rezumat
+          {busy === "summary" ? "Se rezuma..." : "Rezumat"}
         </button>
         <button className="secondary-button" onClick={loadDifficulty}>
           <BarChart3 size={16} />
@@ -589,14 +636,12 @@ function Reader({ book, vocabulary, onRefresh, onNotice }) {
             <span className="eyebrow">Cuprins</span>
             <strong>{pagination.contents.length} capitole</strong>
           </div>
-          <div className="toc-list">
+          <div className="toc-list" ref={tocListRef}>
             {pagination.contents.map((chapter) => (
               <button
-                className={currentPage >= chapter.page &&
-                  currentPage < (pagination.contents.find((item) => item.page > chapter.page)?.page ?? Infinity)
-                  ? "active"
-                  : ""}
+                className={activeChapter?.id === chapter.id ? "active" : ""}
                 key={chapter.id}
+                ref={activeChapter?.id === chapter.id ? activeTocRef : null}
                 onClick={() => goToPage(chapter.page)}
               >
                 <span>{chapter.title}</span>
@@ -622,11 +667,12 @@ function Reader({ book, vocabulary, onRefresh, onNotice }) {
               {sentence.split(/(\b[A-Za-z][A-Za-z'-]*\b)/g).map((part, index) => {
                 const normalized = normalizeWord(part);
                 if (!normalized) return part;
+                const isSelected = selected?.sentenceIndex === sentenceIndex && selected?.tokenIndex === index;
                 return (
                   <button
-                    className={`word-token ${highlighted.has(normalized) ? "highlighted" : ""}`}
+                    className={`word-token ${highlighted.has(normalized) ? "highlighted" : ""} ${isSelected ? "selected-word" : ""}`}
                     key={`${sentenceIndex}-${index}-${part}`}
-                    onClick={() => setSelected({ word: part, sentence, sentenceIndex })}
+                    onClick={() => setSelected({ word: part, sentence, sentenceIndex, tokenIndex: index })}
                   >
                     {part}
                   </button>
@@ -676,14 +722,16 @@ function Reader({ book, vocabulary, onRefresh, onNotice }) {
                 <button className="icon-button" onClick={() => speak(selected.word)} title="Pronunta cuvant">
                   <Volume2 size={18} />
                 </button>
+                {selectedVocabulary && (
+                  <button className="icon-button remove-highlight" onClick={removeVocabulary} title="Elimina din vocabular si sterge highlight-ul">
+                    <Trash2 size={17} />
+                  </button>
+                )}
               </div>
-              <label>
-                Model
-                <select value={model} onChange={(event) => setModel(event.target.value)}>
-                  <option value="gpt">GPT OpenAI API</option>
-                  <option value="ollama">Local AI Mistral 7B</option>
-                </select>
-              </label>
+              <div className="active-model">
+                <Sparkles size={14} />
+                {model === "ollama" ? "Mistral local" : "ChatGPT API"}
+              </div>
               {busy === "translate" ? (
                 <div className="mini-loader">Se traduce contextual...</div>
               ) : translationError ? (
@@ -736,7 +784,11 @@ function Reader({ book, vocabulary, onRefresh, onNotice }) {
 
           {summary && (
             <AiPanel title="Rezumat capitol" items={summary.mainIdeas}>
-              <p>{summary.summary}</p>
+              <div className="summary-copy">
+                {summary.summary.split(/\n{2,}/).map((paragraph) => (
+                  <p key={paragraph.slice(0, 80)}>{paragraph}</p>
+                ))}
+              </div>
             </AiPanel>
           )}
 
@@ -868,6 +920,13 @@ function LearningMode({ vocabulary, onRefresh }) {
   const updateLearned = async () => {
     if (!card) return;
     await api.updateVocabulary(card.id, { learned: true });
+    setFlipped(false);
+    if (cardIndex < group.length - 1) {
+      setCardIndex(cardIndex + 1);
+    } else if (groupIndex < groups.length - 1) {
+      setGroupIndex(groupIndex + 1);
+      setCardIndex(0);
+    }
     await onRefresh();
   };
 
@@ -892,7 +951,13 @@ function LearningMode({ vocabulary, onRefresh }) {
       )}
 
       <div className="learning-actions">
-        <button className="secondary-button" onClick={() => setCardIndex(Math.max(0, cardIndex - 1))}>
+        <button
+          className="secondary-button"
+          onClick={() => {
+            setCardIndex(Math.max(0, cardIndex - 1));
+            setFlipped(false);
+          }}
+        >
           <ChevronLeft size={16} />
           Inapoi
         </button>
@@ -900,7 +965,13 @@ function LearningMode({ vocabulary, onRefresh }) {
           <Check size={16} />
           Stiu
         </button>
-        <button className="secondary-button" onClick={() => setCardIndex(Math.min(group.length - 1, cardIndex + 1))}>
+        <button
+          className="secondary-button"
+          onClick={() => {
+            setCardIndex(Math.min(group.length - 1, cardIndex + 1));
+            setFlipped(false);
+          }}
+        >
           Urmator
           <ChevronRight size={16} />
         </button>

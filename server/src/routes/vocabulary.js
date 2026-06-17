@@ -84,6 +84,18 @@ router.patch("/:id", async (request, response) => {
   response.json(updated);
 });
 
+router.delete("/:id", async (request, response) => {
+  const deleted = await mutateDb((data) => {
+    const index = data.vocabulary.findIndex((item) => item.id === request.params.id);
+    if (index === -1) return false;
+    data.vocabulary.splice(index, 1);
+    return true;
+  });
+
+  if (!deleted) return response.status(404).json({ error: "Cuvantul nu a fost gasit." });
+  response.status(204).end();
+});
+
 async function vocabularyRows({ bookId, date }) {
   const data = await readDb();
   return data.vocabulary
