@@ -18,16 +18,36 @@ const localDictionary = {
 };
 
 export async function translateContext({ word, sentence, model }) {
-  const prompt = `You are an English to Romanian reading tutor. Return strict JSON with keys translation, sentenceRo, explanation. Word: "${word}". Sentence: "${sentence}".`;
+  const prompt = `You are an English to Romanian reading tutor.
+Return ONLY a valid JSON object with these string keys:
+- "translation": the concise Romanian translation of the selected word only
+- "sentenceRo": the complete sentence translated naturally into Romanian
+- "explanation": a concise Romanian explanation of the word's meaning in this exact context
+Selected word: "${word}"
+English sentence: "${sentence}"`;
   const aiText = await callSelectedModel(model, prompt);
   const parsed = parseJson(aiText);
-  if (parsed?.translation && parsed?.sentenceRo) return parsed;
+  if (isValidTranslation(parsed)) {
+    return {
+      translation: cleanModelText(parsed.translation, 240),
+      sentenceRo: cleanModelText(parsed.sentenceRo, 1400),
+      explanation: cleanModelText(parsed.explanation || "", 1000),
+      provider: model === "ollama" ? "ollama" : "openai",
+    };
+  }
+
+  if (model === "ollama") {
+    const error = new Error("Mistral nu a returnat o traducere valida. Incearca din nou.");
+    error.status = 502;
+    throw error;
+  }
 
   const normalized = word.toLowerCase().replace(/[^a-z'-]/g, "");
   return {
     translation: localDictionary[normalized] || `traducere pentru "${word}"`,
     sentenceRo: fallbackRomanianSentence(sentence),
-    explanation: `Traducerea este estimata contextual din propozitie. Configureaza OpenAI sau Ollama pentru raspunsuri AI reale.`,
+    explanation: "Traducere orientativa locala. Configureaza cheia OpenAI pentru traducere AI.",
+    provider: "fallback",
   };
 }
 
@@ -126,17 +146,34 @@ async function callOllama(prompt) {
     const response = await fetch(`${process.env.OLLAMA_BASE_URL || "http://localhost:11434"}/api/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(45000),
       body: JSON.stringify({
         model: process.env.OLLAMA_MODEL || "mistral:7b",
         prompt,
+        format: "json",
         stream: false,
+        options: {
+          temperature: 0.1,
+          num_predict: 320,
+        },
       }),
     });
-    if (!response.ok) return "";
+    if (!response.ok) {
+      const error = new Error(`Ollama a raspuns cu status ${response.status}.`);
+      error.status = 502;
+      throw error;
+    }
     const data = await response.json();
     return data.response || "";
-  } catch {
-    return "";
+  } catch (error) {
+    if (error.status) throw error;
+    const serviceError = new Error(
+      error.name === "TimeoutError"
+        ? "Mistral a depasit timpul de raspuns. Incearca din nou."
+        : "Ollama nu este disponibil. Verifica daca serviciul ruleaza.",
+    );
+    serviceError.status = 503;
+    throw serviceError;
   }
 }
 
@@ -157,4 +194,20 @@ function parseJson(text) {
 
 function fallbackRomanianSentence(sentence) {
   return `Traducere orientativa: ${sentence}`;
+}
+
+function isValidTranslation(value) {
+  return value
+    && typeof value.translation === "string"
+    && value.translation.trim()
+    && typeof value.sentenceRo === "string"
+    && value.sentenceRo.trim()
+    && (!value.explanation || typeof value.explanation === "string");
+}
+
+function cleanModelText(value, maxLength) {
+  return String(value)
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLength);
 }

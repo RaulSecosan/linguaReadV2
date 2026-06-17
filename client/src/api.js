@@ -36,7 +36,8 @@ export const api = {
   saveVocabulary: (payload) => request("/vocabulary", { method: "POST", body: JSON.stringify(payload) }),
   updateVocabulary: (id, payload) =>
     request(`/vocabulary/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
-  translate: (payload) => request("/ai/translate", { method: "POST", body: JSON.stringify(payload) }),
+  translate: (payload, options = {}) =>
+    request("/ai/translate", { ...options, method: "POST", body: JSON.stringify(payload) }),
   summary: (payload) => request("/ai/summary", { method: "POST", body: JSON.stringify(payload) }),
   difficulty: (payload) => request("/ai/difficulty", { method: "POST", body: JSON.stringify(payload) }),
   coach: () => request("/ai/coach"),

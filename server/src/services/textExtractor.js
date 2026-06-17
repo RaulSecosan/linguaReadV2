@@ -5,10 +5,11 @@ import path from "node:path";
 
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "" });
 
-export async function extractText(filePath, originalName) {
+export async function extractBook(filePath, originalName) {
   const ext = path.extname(originalName).toLowerCase();
   if (ext === ".txt") {
-    return normalizeText(await fs.readFile(filePath, "utf8"));
+    const text = normalizeText(await fs.readFile(filePath, "utf8"));
+    return { text, chapters: detectTextChapters(text) };
   }
   if (ext === ".pdf") {
     return extractPdf(filePath);
@@ -25,8 +26,32 @@ async function extractPdf(filePath) {
   const buffer = await fs.readFile(filePath);
   try {
     const pdfParse = (await import("pdf-parse")).default;
-    const data = await pdfParse(buffer);
-    return normalizeText(data.text);
+    const sourcePages = [];
+    const data = await pdfParse(buffer, {
+      pagerender: async (pageData) => {
+        const content = await pageData.getTextContent({
+          normalizeWhitespace: false,
+          disableCombineTextItems: false,
+        });
+        let previousY;
+        let pageText = "";
+        for (const item of content.items) {
+          const y = item.transform?.[5];
+          pageText += previousY === undefined || y === previousY ? item.str : `\n${item.str}`;
+          previousY = y;
+        }
+        const normalized = normalizeText(pageText);
+        sourcePages.push(normalized);
+        return normalized;
+      },
+    });
+    const pages = sourcePages.filter(Boolean);
+    const text = normalizeText(pages.length ? pages.join("\n\n") : data.text);
+    return {
+      text,
+      sourcePages: pages,
+      chapters: detectPdfChapters(pages.length ? pages : [text]),
+    };
   } catch (error) {
     throw new Error(`Nu am putut extrage textul din PDF: ${error.message}`);
   }
@@ -51,12 +76,25 @@ async function extractEpub(filePath) {
   const chapters = spine
     .map((item) => manifest.get(item.idref))
     .filter(Boolean)
-    .map((item) => path.posix.normalize(path.posix.join(opfDir, item.href)))
-    .map((chapterPath) => zip.getEntry(chapterPath))
-    .filter(Boolean)
-    .map((entry) => htmlToText(entry.getData().toString("utf8")));
+    .map((item, index) => {
+      const chapterPath = path.posix.normalize(path.posix.join(opfDir, item.href.split("#")[0]));
+      const entry = zip.getEntry(chapterPath);
+      if (!entry) return null;
+      const html = entry.getData().toString("utf8");
+      const text = normalizeText(htmlToText(html));
+      if (!text) return null;
+      return {
+        id: `chapter-${index + 1}`,
+        title: extractHtmlTitle(html) || `Capitolul ${index + 1}`,
+        text,
+      };
+    })
+    .filter(Boolean);
 
-  return normalizeText(chapters.join("\n\n"));
+  return {
+    text: normalizeText(chapters.map((chapter) => chapter.text).join("\n\n")),
+    chapters,
+  };
 }
 
 function asArray(value) {
@@ -73,6 +111,75 @@ function htmlToText(html) {
     .replace(/&amp;/g, "&")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'");
+}
+
+function extractHtmlTitle(html) {
+  const match = html.match(/<(?:h1|h2|title)[^>]*>([\s\S]*?)<\/(?:h1|h2|title)>/i);
+  return match ? normalizeText(htmlToText(match[1])).slice(0, 140) : "";
+}
+
+export function buildBookStructure(text, fileType = "txt") {
+  const normalized = normalizeText(text || "");
+  return {
+    text: normalized,
+    structureVersion: 2,
+    chapters: fileType === "pdf" ? detectPdfChapters([normalized]) : detectTextChapters(normalized),
+  };
+}
+
+function detectPdfChapters(pages) {
+  const chapters = [];
+  let current = null;
+
+  pages.forEach((pageText, pageIndex) => {
+    const title = findChapterHeading(pageText);
+    if (title || !current) {
+      current = {
+        id: `chapter-${chapters.length + 1}`,
+        title: title || "Inceput",
+        startPage: pageIndex,
+        endPage: pageIndex,
+      };
+      chapters.push(current);
+    } else {
+      current.endPage = pageIndex;
+    }
+  });
+
+  return chapters;
+}
+
+function detectTextChapters(text) {
+  const headingPattern = /^(?:(?:chapter|capitol(?:ul)?|part|book)\s+(?:[ivxlcdm]+|\d+)(?:[.:\s-]+.*)?|preface|introduction|contents|conclusion|epilogue)$/gim;
+  const matches = [...text.matchAll(headingPattern)];
+  if (!matches.length) {
+    return [{ id: "chapter-1", title: "Text complet", text }];
+  }
+
+  const chapters = [];
+  if (matches[0].index > 0) {
+    const intro = normalizeText(text.slice(0, matches[0].index));
+    if (intro) chapters.push({ id: "chapter-1", title: "Inceput", text: intro });
+  }
+  matches.forEach((match, index) => {
+    const chapterText = normalizeText(text.slice(match.index, matches[index + 1]?.index ?? text.length));
+    if (chapterText) {
+      chapters.push({
+        id: `chapter-${chapters.length + 1}`,
+        title: normalizeText(match[0]).slice(0, 140),
+        text: chapterText,
+      });
+    }
+  });
+  return chapters;
+}
+
+function findChapterHeading(text) {
+  const lines = text.split("\n").map((line) => line.trim()).filter(Boolean).slice(0, 18);
+  const headingPattern = /^(?:(?:chapter|capitol(?:ul)?|part|book)\s+(?:[ivxlcdm]+|\d+)(?:[.:\s-]+.*)?|preface|introduction|conclusion|epilogue)$/i;
+  const headings = lines.filter((line) => headingPattern.test(line));
+  if (headings.length > 2 || lines.some((line) => /^(contents|table of contents|cuprins)$/i.test(line))) return "";
+  return headings[0]?.slice(0, 140) || "";
 }
 
 function normalizeText(text) {

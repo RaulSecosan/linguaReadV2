@@ -21,7 +21,7 @@ import {
   Volume2,
 } from "lucide-react";
 import React from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { API_BASE, api } from "./api";
 
 const navigation = [
@@ -45,6 +45,49 @@ const normalizeWord = (word) => word.toLowerCase().replace(/^[^a-z']+|[^a-z']+$/
 const splitSentences = (text = "") => {
   const matches = text.replace(/\s+/g, " ").trim().match(/[^.!?]+[.!?]+|[^.!?]+$/g);
   return matches?.map((sentence) => sentence.trim()).filter(Boolean) || [];
+};
+
+const paginateBook = (book, wordsPerPage) => {
+  if (!book) return { pages: [], contents: [] };
+
+  if (book.sourcePages?.length) {
+    const pages = book.sourcePages.map((text, index) => ({
+      text,
+      chapterTitle:
+        book.chapters?.find((chapter) => index >= chapter.startPage && index <= chapter.endPage)?.title || "Inceput",
+      sourcePage: index + 1,
+    }));
+    const contents = (book.chapters || []).map((chapter) => ({
+      id: chapter.id,
+      title: chapter.title,
+      page: chapter.startPage || 0,
+    }));
+    return { pages, contents };
+  }
+
+  const chapters = book.chapters?.length
+    ? book.chapters
+    : [{ id: "chapter-1", title: book.title, text: book.text || "" }];
+  const pages = [];
+  const contents = [];
+  chapters.forEach((chapter) => {
+    contents.push({ id: chapter.id, title: chapter.title, page: pages.length });
+    const sentences = splitSentences(chapter.text);
+    let pageText = "";
+    let wordCount = 0;
+    sentences.forEach((sentence) => {
+      const sentenceWords = sentence.split(/\s+/).filter(Boolean).length;
+      if (pageText && wordCount + sentenceWords > wordsPerPage) {
+        pages.push({ text: pageText.trim(), chapterTitle: chapter.title });
+        pageText = "";
+        wordCount = 0;
+      }
+      pageText += `${sentence} `;
+      wordCount += sentenceWords;
+    });
+    if (pageText.trim()) pages.push({ text: pageText.trim(), chapterTitle: chapter.title });
+  });
+  return { pages, contents };
 };
 
 const speak = (text, lang = "en-US") => {
@@ -86,9 +129,10 @@ function App() {
   }, [refresh]);
 
   useEffect(() => {
-    if (!currentBookId) return;
+    if (!currentBookId || activeView !== "reader") return;
+    setCurrentBook((loadedBook) => loadedBook?.id === currentBookId ? loadedBook : null);
     api.book(currentBookId).then(setCurrentBook).catch((error) => setNotice(error.message));
-  }, [currentBookId]);
+  }, [activeView, currentBookId]);
 
   const refreshBook = useCallback(async () => {
     if (!currentBookId) return;
@@ -373,14 +417,20 @@ function Reader({ book, vocabulary, onRefresh, onNotice }) {
   const [selected, setSelected] = useState(null);
   const [model, setModel] = useState("gpt");
   const [translation, setTranslation] = useState(null);
+  const [translationError, setTranslationError] = useState("");
   const [summary, setSummary] = useState(null);
   const [difficulty, setDifficulty] = useState(null);
   const [busy, setBusy] = useState("");
-  const readerRef = useRef(null);
-  const saveTimer = useRef(null);
+  const [currentPage, setCurrentPage] = useState(0);
 
-  const sentences = useMemo(() => splitSentences(book?.text), [book]);
+  const wordsPerPage = Math.max(180, Math.round(430 * (pageWidth / 760) * (18 / fontSize)));
+  const pagination = useMemo(() => paginateBook(book, wordsPerPage), [book, wordsPerPage]);
+  const page = pagination.pages[currentPage] || pagination.pages[0];
+  const sentences = useMemo(() => splitSentences(page?.text), [page?.text]);
   const highlighted = useMemo(() => new Set(vocabulary.map((item) => normalizeWord(item.word))), [vocabulary]);
+  const progressPercent = pagination.pages.length
+    ? Math.round(((currentPage + 1) / pagination.pages.length) * 100)
+    : 0;
 
   useEffect(() => {
     localStorage.setItem("lr-theme", theme);
@@ -392,12 +442,18 @@ function Reader({ book, vocabulary, onRefresh, onNotice }) {
   useEffect(() => {
     setSelected(null);
     setTranslation(null);
+    setTranslationError("");
     setSummary(null);
     setDifficulty(null);
+    setCurrentPage(Math.max(0, Number(book?.progress?.page) || 0));
   }, [book?.id]);
 
   useEffect(() => {
     if (!selected) return;
+    const controller = new AbortController();
+    let active = true;
+    setTranslation(null);
+    setTranslationError("");
     setBusy("translate");
     api
       .translate({
@@ -405,37 +461,43 @@ function Reader({ book, vocabulary, onRefresh, onNotice }) {
         word: selected.word,
         sentence: selected.sentence,
         model,
+      }, { signal: controller.signal })
+      .then((result) => {
+        if (active) setTranslation(result);
       })
-      .then(setTranslation)
-      .catch((error) => onNotice(error.message))
-      .finally(() => setBusy(""));
+      .catch((error) => {
+        if (active && error.name !== "AbortError") setTranslationError(error.message);
+      })
+      .finally(() => {
+        if (active) setBusy("");
+      });
+    return () => {
+      active = false;
+      controller.abort();
+    };
   }, [selected, model, book?.id, onNotice]);
 
-  const saveProgress = useCallback(() => {
-    if (!book || !readerRef.current) return;
-    const element = readerRef.current;
-    const scrollable = Math.max(1, element.scrollHeight - element.clientHeight);
-    const percent = Math.min(100, Math.round((element.scrollTop / scrollable) * 100));
-    window.clearTimeout(saveTimer.current);
-    saveTimer.current = window.setTimeout(() => {
-      api.updateProgress(book.id, { percent, position: element.scrollTop }).catch(() => {});
-    }, 400);
-  }, [book]);
+  const saveProgress = useCallback((nextPage) => {
+    if (!book || !pagination.pages.length) return;
+    const safePage = Math.max(0, Math.min(nextPage, pagination.pages.length - 1));
+    const percent = Math.round(((safePage + 1) / pagination.pages.length) * 100);
+    api.updateProgress(book.id, { percent, page: safePage, position: safePage }).catch(() => {});
+  }, [book, pagination.pages.length]);
 
   useEffect(() => {
-    if (!book || !readerRef.current) return;
-    readerRef.current.scrollTop = book.progress?.position || 0;
-  }, [book?.id]);
+    if (currentPage >= pagination.pages.length && pagination.pages.length) {
+      setCurrentPage(pagination.pages.length - 1);
+    }
+  }, [currentPage, pagination.pages.length]);
 
   if (!book) return <div className="empty-state">Alege sau incarca o carte.</div>;
 
   const addBookmark = async () => {
-    const position = readerRef.current?.scrollTop || 0;
-    const percent = book.progress?.percent || 0;
     await api.addBookmark(book.id, {
-      position,
-      percent,
-      label: selected?.sentence?.slice(0, 80) || `Pozitie ${percent}%`,
+      position: currentPage,
+      page: currentPage,
+      percent: progressPercent,
+      label: selected?.sentence?.slice(0, 80) || `${page?.chapterTitle || "Pagina"} · ${currentPage + 1}`,
     });
     await onRefresh();
   };
@@ -458,7 +520,7 @@ function Reader({ book, vocabulary, onRefresh, onNotice }) {
   const loadSummary = async () => {
     setBusy("summary");
     api
-      .summary({ bookId: book.id })
+      .summary({ bookId: book.id, text: page?.text, chapterTitle: page?.chapterTitle })
       .then(setSummary)
       .catch((error) => onNotice(error.message))
       .finally(() => setBusy(""));
@@ -471,6 +533,16 @@ function Reader({ book, vocabulary, onRefresh, onNotice }) {
       .then(setDifficulty)
       .catch((error) => onNotice(error.message))
       .finally(() => setBusy(""));
+  };
+
+  const goToPage = (nextPage) => {
+    const safePage = Math.max(0, Math.min(nextPage, pagination.pages.length - 1));
+    setCurrentPage(safePage);
+    setSelected(null);
+    setTranslation(null);
+    setTranslationError("");
+    setSummary(null);
+    saveProgress(safePage);
   };
 
   return (
@@ -512,16 +584,37 @@ function Reader({ book, vocabulary, onRefresh, onNotice }) {
       </div>
 
       <div className="reader-layout">
+        <nav className="reader-toc" aria-label="Cuprins">
+          <div className="toc-heading">
+            <span className="eyebrow">Cuprins</span>
+            <strong>{pagination.contents.length} capitole</strong>
+          </div>
+          <div className="toc-list">
+            {pagination.contents.map((chapter) => (
+              <button
+                className={currentPage >= chapter.page &&
+                  currentPage < (pagination.contents.find((item) => item.page > chapter.page)?.page ?? Infinity)
+                  ? "active"
+                  : ""}
+                key={chapter.id}
+                onClick={() => goToPage(chapter.page)}
+              >
+                <span>{chapter.title}</span>
+                <small>{chapter.page + 1}</small>
+              </button>
+            ))}
+          </div>
+        </nav>
+
+        <div className="reader-stage">
         <article
-          ref={readerRef}
           className="reader-page"
-          onScroll={saveProgress}
           style={{ maxWidth: pageWidth, fontFamily, fontSize }}
         >
           <header className="reader-title">
-            <span>{book.author || "Autor necunoscut"}</span>
-            <h2>{book.title}</h2>
-            <ProgressBar value={book.progress?.percent || 0} />
+            <span>{page?.chapterTitle || book.title}</span>
+            <h2>{currentPage === 0 ? book.title : page?.chapterTitle}</h2>
+            <ProgressBar value={progressPercent} />
           </header>
 
           {sentences.map((sentence, sentenceIndex) => (
@@ -541,7 +634,36 @@ function Reader({ book, vocabulary, onRefresh, onNotice }) {
               })}{" "}
             </span>
           ))}
+          <footer className="book-page-number">
+            {page?.sourcePage ? `Pagina PDF ${page.sourcePage}` : `Pagina ${currentPage + 1}`} din {pagination.pages.length}
+          </footer>
         </article>
+        <div className="page-navigation">
+          <button className="secondary-button" disabled={currentPage === 0} onClick={() => goToPage(currentPage - 1)}>
+            <ChevronLeft size={18} />
+            Anterioara
+          </button>
+          <label>
+            Pagina
+            <input
+              type="number"
+              min="1"
+              max={pagination.pages.length}
+              value={currentPage + 1}
+              onChange={(event) => goToPage(Number(event.target.value) - 1)}
+            />
+            <span>din {pagination.pages.length}</span>
+          </label>
+          <button
+            className="primary-button"
+            disabled={currentPage >= pagination.pages.length - 1}
+            onClick={() => goToPage(currentPage + 1)}
+          >
+            Urmatoarea
+            <ChevronRight size={18} />
+          </button>
+        </div>
+        </div>
 
         <aside className="reader-inspector">
           {selected ? (
@@ -564,10 +686,21 @@ function Reader({ book, vocabulary, onRefresh, onNotice }) {
               </label>
               {busy === "translate" ? (
                 <div className="mini-loader">Se traduce contextual...</div>
+              ) : translationError ? (
+                <div className="translation-error" role="alert">
+                  <strong>Traducerea nu este disponibila</strong>
+                  <p>{translationError}</p>
+                  <button
+                    className="secondary-button"
+                    onClick={() => setSelected((value) => value ? { ...value, requestId: Date.now() } : value)}
+                  >
+                    Incearca din nou
+                  </button>
+                </div>
               ) : translation ? (
                 <>
                   <div className="translation-card">
-                    <span>Traducere</span>
+                    <span>Traducere · {translation.provider === "ollama" ? "Mistral local" : translation.provider === "openai" ? "OpenAI" : "local"}</span>
                     <strong>{translation.translation}</strong>
                     <p>{translation.explanation}</p>
                   </div>
@@ -591,9 +724,7 @@ function Reader({ book, vocabulary, onRefresh, onNotice }) {
                 {book.bookmarks.map((bookmark) => (
                   <button
                     key={bookmark.id}
-                    onClick={() => {
-                      if (readerRef.current) readerRef.current.scrollTop = bookmark.position;
-                    }}
+                    onClick={() => goToPage(Number(bookmark.page ?? bookmark.position) || 0)}
                   >
                     <Bookmark size={14} />
                     <span>{bookmark.label}</span>
