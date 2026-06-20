@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import multer from "multer";
 import { v4 as uuid } from "uuid";
 import { mutateDb, readDb } from "../services/db.js";
+import { analyzeText } from "../services/analysis.js";
 import { buildBookStructure, extractBook } from "../services/textExtractor.js";
 
 const router = express.Router();
@@ -30,7 +31,16 @@ const upload = multer({
 });
 
 router.get("/", async (_request, response) => {
-  const data = await readDb();
+  let data = await readDb();
+  if (data.books.some((book) => !book.analysis || !book.pageCount)) {
+    await mutateDb((nextData) => {
+      nextData.books.forEach((book) => {
+        book.analysis ||= analyzeText(book.text || "");
+        book.pageCount ||= book.sourcePages?.length || Math.max(1, Math.ceil((book.wordCount || 0) / 250));
+      });
+    });
+    data = await readDb();
+  }
   response.json(data.books.map(({ text, sourcePages, chapters, storedPath, ...book }) => book));
 });
 
@@ -70,6 +80,7 @@ router.post("/", upload.fields([{ name: "book", maxCount: 1 }, { name: "cover", 
   if (!text) return response.status(400).json({ error: "Nu am gasit text in fisier." });
 
   const coverFile = request.files?.cover?.[0];
+  const analysis = analyzeText(text);
   const book = {
     id: uuid(),
     title: request.body.title || path.basename(bookFile.originalname, path.extname(bookFile.originalname)),
@@ -83,6 +94,8 @@ router.post("/", upload.fields([{ name: "book", maxCount: 1 }, { name: "cover", 
     chapters: extracted.chapters,
     sourcePages: extracted.sourcePages,
     wordCount: text.split(/\s+/).filter(Boolean).length,
+    pageCount: extracted.sourcePages?.length || Math.max(1, Math.ceil(analysis.wordCount / 250)),
+    analysis,
     createdAt: new Date().toISOString(),
     progress: {
       percent: 0,
@@ -97,6 +110,27 @@ router.post("/", upload.fields([{ name: "book", maxCount: 1 }, { name: "cover", 
   });
 
   response.status(201).json(book);
+});
+
+router.patch("/:id", upload.single("cover"), async (request, response) => {
+  const updated = await mutateDb((data) => {
+    const book = data.books.find((item) => item.id === request.params.id);
+    if (!book) return null;
+    if (typeof request.body.title === "string" && request.body.title.trim()) {
+      book.title = request.body.title.trim();
+    }
+    if (typeof request.body.author === "string") {
+      book.author = request.body.author.trim();
+    }
+    if (request.file) {
+      book.coverUrl = `/uploads/covers/${path.basename(request.file.path)}`;
+    }
+    book.updatedAt = new Date().toISOString();
+    return book;
+  });
+
+  if (!updated) return response.status(404).json({ error: "Cartea nu a fost gasita." });
+  response.json(updated);
 });
 
 router.patch("/:id/progress", async (request, response) => {
@@ -114,6 +148,24 @@ router.patch("/:id/progress", async (request, response) => {
 
   if (!updated) return response.status(404).json({ error: "Cartea nu a fost gasita." });
   response.json(updated);
+});
+
+router.patch("/:id/saved-position", async (request, response) => {
+  const savedPosition = await mutateDb((data) => {
+    const book = data.books.find((item) => item.id === request.params.id);
+    if (!book) return null;
+    book.savedPosition = {
+      page: Math.max(0, Number(request.body.page) || 0),
+      percent: Math.max(0, Math.min(100, Number(request.body.percent) || 0)),
+      chapterTitle: String(request.body.chapterTitle || ""),
+      sentence: String(request.body.sentence || ""),
+      savedAt: new Date().toISOString(),
+    };
+    return book.savedPosition;
+  });
+
+  if (!savedPosition) return response.status(404).json({ error: "Cartea nu a fost gasita." });
+  response.json(savedPosition);
 });
 
 router.post("/:id/bookmarks", async (request, response) => {

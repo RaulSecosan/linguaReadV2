@@ -10,9 +10,12 @@ import {
   GraduationCap,
   Library,
   ListChecks,
+  MoreVertical,
   Moon,
+  Pencil,
   Play,
   Plus,
+  RotateCcw,
   Search,
   Settings,
   Sparkles,
@@ -20,6 +23,7 @@ import {
   Trash2,
   Upload,
   Volume2,
+  X,
 } from "lucide-react";
 import React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -100,8 +104,17 @@ const speak = (text, lang = "en-US") => {
   window.speechSynthesis.speak(utterance);
 };
 
+const formatReadingTime = (minutes = 0) => {
+  const safeMinutes = Math.max(0, Math.round(minutes));
+  if (safeMinutes < 60) return `${safeMinutes} min`;
+  const hours = Math.floor(safeMinutes / 60);
+  const remainder = safeMinutes % 60;
+  return remainder ? `${hours} h ${remainder} min` : `${hours} h`;
+};
+
 function App() {
   const [activeView, setActiveView] = useState("dashboard");
+  const [appTheme, setAppTheme] = useState(() => localStorage.getItem("lr-theme") || "light");
   const [books, setBooks] = useState([]);
   const [currentBookId, setCurrentBookId] = useState("");
   const [currentBook, setCurrentBook] = useState(null);
@@ -174,8 +187,19 @@ function App() {
     if (activeView === "coach") loadCoach().catch((error) => setNotice(error.message));
   }, [activeView]);
 
+  useEffect(() => {
+    localStorage.setItem("lr-theme", appTheme);
+  }, [appTheme]);
+
+  const handleUpdateBook = async (bookId, formData) => {
+    await api.updateBook(bookId, formData);
+    await refresh();
+    if (currentBookId === bookId && activeView === "reader") await refreshBook();
+    setNotice("Detaliile cartii au fost actualizate.");
+  };
+
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${appTheme}`}>
       <aside className="sidebar" aria-label="Navigare principala">
         <div className="brand">
           <div className="brand-mark">LR</div>
@@ -209,7 +233,16 @@ function App() {
             <span className="eyebrow">Aplicatie full stack</span>
             <h1>{navigation.find((item) => item.id === activeView)?.label || "LinguaRead"}</h1>
           </div>
-          <BookSelector books={books} value={currentBookId} onChange={setCurrentBookId} />
+          <div className="topbar-actions">
+            <BookSelector books={books} value={currentBookId} onChange={setCurrentBookId} />
+            <button
+              className="icon-button theme-toggle"
+              onClick={() => setAppTheme(appTheme === "light" ? "dark" : "light")}
+              title={appTheme === "light" ? "Activeaza modul intunecat" : "Activeaza modul luminos"}
+            >
+              {appTheme === "light" ? <Moon size={18} /> : <Sun size={18} />}
+            </button>
+          </div>
         </header>
 
         {notice && (
@@ -226,7 +259,12 @@ function App() {
               <Dashboard stats={stats} books={books} vocabulary={vocabulary} onOpenBook={handleOpenBook} />
             )}
             {activeView === "library" && (
-              <LibraryView books={books} onUpload={handleUpload} onOpenBook={handleOpenBook} />
+              <LibraryView
+                books={books}
+                onUpload={handleUpload}
+                onOpenBook={handleOpenBook}
+                onUpdateBook={handleUpdateBook}
+              />
             )}
             {activeView === "reader" && (
               <Reader
@@ -234,6 +272,8 @@ function App() {
                 vocabulary={bookVocabulary}
                 onRefresh={refreshBook}
                 onNotice={setNotice}
+                theme={appTheme}
+                onToggleTheme={() => setAppTheme(appTheme === "light" ? "dark" : "light")}
               />
             )}
             {activeView === "vocabulary" && (
@@ -271,7 +311,7 @@ function Dashboard({ stats, books, vocabulary, onOpenBook }) {
   const cards = [
     { label: "Carti citite", value: stats?.booksRead || 0 },
     { label: "Pagini citite", value: stats?.pagesRead || 0 },
-    { label: "Timp citire", value: `${stats?.readingMinutes || 0} min` },
+    { label: "Timp citire", value: formatReadingTime(stats?.readingMinutes || 0) },
     { label: "Cuvinte salvate", value: vocabulary.length },
     { label: "Cuvinte invatate", value: vocabulary.filter((item) => item.learned).length },
   ];
@@ -301,6 +341,11 @@ function Dashboard({ stats, books, vocabulary, onOpenBook }) {
               <div className="book-card-body">
                 <h3>{book.title}</h3>
                 <p>{book.author || "Autor necunoscut"}</p>
+                <div className="book-facts">
+                  <span>{book.pageCount || 1} pagini</span>
+                  <span>Nivel {book.analysis?.level || "B1"}</span>
+                  <span>{formatReadingTime(book.analysis?.readingTimeMinutes || 0)}</span>
+                </div>
                 <ProgressBar value={book.progress?.percent || 0} />
                 <button className="primary-button" onClick={() => onOpenBook(book.id)}>
                   <BookOpen size={16} />
@@ -315,12 +360,13 @@ function Dashboard({ stats, books, vocabulary, onOpenBook }) {
   );
 }
 
-function LibraryView({ books, onUpload, onOpenBook }) {
+function LibraryView({ books, onUpload, onOpenBook, onUpdateBook }) {
   const [title, setTitle] = useState("");
   const [author, setAuthor] = useState("");
   const [bookFile, setBookFile] = useState(null);
   const [coverFile, setCoverFile] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [editingBook, setEditingBook] = useState(null);
 
   const submit = async (event) => {
     event.preventDefault();
@@ -382,9 +428,20 @@ function LibraryView({ books, onUpload, onOpenBook }) {
           <article className="book-card" key={book.id}>
             <Cover book={book} />
             <div className="book-card-body">
+              <button
+                className="icon-button book-menu-button"
+                onClick={() => setEditingBook(book)}
+                title="Setari carte"
+              >
+                <MoreVertical size={17} />
+              </button>
               <span className="tag">{book.fileType.toUpperCase()}</span>
               <h3>{book.title}</h3>
               <p>{book.author || "Autor necunoscut"}</p>
+              <div className="book-facts">
+                <span>{book.pageCount || 1} pagini</span>
+                <span>Nivel {book.analysis?.level || "B1"}</span>
+              </div>
               <ProgressBar value={book.progress?.percent || 0} />
               <button className="secondary-button" onClick={() => onOpenBook(book.id)}>
                 <BookOpen size={16} />
@@ -394,7 +451,82 @@ function LibraryView({ books, onUpload, onOpenBook }) {
           </article>
         ))}
       </div>
+      {editingBook && (
+        <BookSettingsModal
+          key={editingBook.id}
+          book={editingBook}
+          onClose={() => setEditingBook(null)}
+          onSave={async (formData) => {
+            await onUpdateBook(editingBook.id, formData);
+            setEditingBook(null);
+          }}
+        />
+      )}
     </section>
+  );
+}
+
+function BookSettingsModal({ book, onClose, onSave }) {
+  const [title, setTitle] = useState(book.title);
+  const [author, setAuthor] = useState(book.author || "");
+  const [cover, setCover] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (event) => {
+    event.preventDefault();
+    setBusy(true);
+    const formData = new FormData();
+    formData.append("title", title);
+    formData.append("author", author);
+    if (cover) formData.append("cover", cover);
+    try {
+      await onSave(formData);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <form className="book-settings-modal" onSubmit={submit} onMouseDown={(event) => event.stopPropagation()}>
+        <div className="section-heading">
+          <div>
+            <span className="eyebrow">Setari carte</span>
+            <h2>Editeaza detaliile</h2>
+          </div>
+          <button type="button" className="icon-button" onClick={onClose} title="Inchide">
+            <X size={18} />
+          </button>
+        </div>
+        <div className="book-settings-preview">
+          <Cover book={book} />
+          <div>
+            <strong>{title || book.title}</strong>
+            <span>{author || "Autor necunoscut"}</span>
+            <small>{book.fileType.toUpperCase()} · {book.pageCount || 1} pagini</small>
+          </div>
+        </div>
+        <label>
+          Numele cartii
+          <input value={title} onChange={(event) => setTitle(event.target.value)} required />
+        </label>
+        <label>
+          Autor
+          <input value={author} onChange={(event) => setAuthor(event.target.value)} placeholder="Autor necunoscut" />
+        </label>
+        <label>
+          Coperta noua
+          <input type="file" accept="image/*" onChange={(event) => setCover(event.target.files?.[0] || null)} />
+        </label>
+        <div className="modal-actions">
+          <button type="button" className="secondary-button" onClick={onClose}>Renunta</button>
+          <button className="primary-button" disabled={busy || !title.trim()}>
+            <Pencil size={16} />
+            {busy ? "Se salveaza..." : "Salveaza"}
+          </button>
+        </div>
+      </form>
+    </div>
   );
 }
 
@@ -410,8 +542,7 @@ function Cover({ book }) {
   );
 }
 
-function Reader({ book, vocabulary, onRefresh, onNotice }) {
-  const [theme, setTheme] = useState(() => localStorage.getItem("lr-theme") || "light");
+function Reader({ book, vocabulary, onRefresh, onNotice, theme, onToggleTheme }) {
   const [fontSize, setFontSize] = useState(() => Number(localStorage.getItem("lr-font-size")) || 18);
   const [fontFamily, setFontFamily] = useState(() => localStorage.getItem("lr-font") || fontOptions[0].value);
   const [pageWidth, setPageWidth] = useState(() => Number(localStorage.getItem("lr-page-width")) || 760);
@@ -444,12 +575,11 @@ function Reader({ book, vocabulary, onRefresh, onNotice }) {
     : 0;
 
   useEffect(() => {
-    localStorage.setItem("lr-theme", theme);
     localStorage.setItem("lr-font-size", String(fontSize));
     localStorage.setItem("lr-font", fontFamily);
     localStorage.setItem("lr-page-width", String(pageWidth));
     localStorage.setItem("lr-ai-model", model);
-  }, [theme, fontSize, fontFamily, pageWidth, model]);
+  }, [fontSize, fontFamily, pageWidth, model]);
 
   useEffect(() => {
     setSelected(null);
@@ -516,14 +646,15 @@ function Reader({ book, vocabulary, onRefresh, onNotice }) {
 
   if (!book) return <div className="empty-state">Alege sau incarca o carte.</div>;
 
-  const addBookmark = async () => {
-    await api.addBookmark(book.id, {
-      position: currentPage,
+  const saveReadingPosition = async () => {
+    await api.saveReadingPosition(book.id, {
       page: currentPage,
       percent: progressPercent,
-      label: selected?.sentence?.slice(0, 80) || `${page?.chapterTitle || "Pagina"} · ${currentPage + 1}`,
+      chapterTitle: page?.chapterTitle || book.title,
+      sentence: sentences[0] || "",
     });
     await onRefresh();
+    onNotice(`Pagina ${currentPage + 1} a fost salvata.`);
   };
 
   const saveVocabulary = async () => {
@@ -587,7 +718,7 @@ function Reader({ book, vocabulary, onRefresh, onNotice }) {
   return (
     <section className={`reader-shell ${theme}`}>
       <div className="reader-toolbar">
-        <button className="icon-button" onClick={() => setTheme(theme === "light" ? "dark" : "light")} title="Light/Dark">
+        <button className="icon-button" onClick={onToggleTheme} title="Light/Dark">
           {theme === "light" ? <Moon size={18} /> : <Sun size={18} />}
         </button>
         <label className="range-label">
@@ -616,9 +747,18 @@ function Reader({ book, vocabulary, onRefresh, onNotice }) {
             <option value="ollama">Mistral local</option>
           </select>
         </label>
-        <button className="secondary-button" onClick={addBookmark}>
+        <button className="secondary-button saved-position-button" onClick={saveReadingPosition}>
           <Bookmark size={16} />
-          Bookmark
+          Salveaza aici
+        </button>
+        <button
+          className="secondary-button resume-position-button"
+          disabled={!book.savedPosition}
+          onClick={() => goToPage(book.savedPosition?.page || 0)}
+          title={book.savedPosition ? `Pagina salvata: ${book.savedPosition.page + 1}` : "Nu exista o pagina salvata"}
+        >
+          <Play size={16} />
+          Pagina salvata
         </button>
         <button className="secondary-button" onClick={loadSummary} disabled={busy === "summary"}>
           <Sparkles size={16} />
@@ -663,7 +803,12 @@ function Reader({ book, vocabulary, onRefresh, onNotice }) {
           </header>
 
           {sentences.map((sentence, sentenceIndex) => (
-            <span className="sentence" key={`${sentenceIndex}-${sentence.slice(0, 12)}`}>
+            <span
+              className={`sentence ${
+                book.savedPosition?.page === currentPage && sentenceIndex === 0 ? "saved-position-sentence" : ""
+              }`}
+              key={`${sentenceIndex}-${sentence.slice(0, 12)}`}
+            >
               {sentence.split(/(\b[A-Za-z][A-Za-z'-]*\b)/g).map((part, index) => {
                 const normalized = normalizeWord(part);
                 if (!normalized) return part;
@@ -842,7 +987,9 @@ function VocabularyView({ books, vocabulary, onRefresh }) {
 
   const filtered = vocabulary.filter((item) => {
     const matchesBook = !bookId || item.bookId === bookId;
-    const matchesQuery = !query || `${item.word} ${item.translation}`.toLowerCase().includes(query.toLowerCase());
+    const matchesQuery = !query || `${item.word} ${item.translation} ${item.bookTitle} ${item.sentence}`
+      .toLowerCase()
+      .includes(query.toLowerCase());
     return matchesBook && matchesQuery;
   });
 
@@ -853,6 +1000,16 @@ function VocabularyView({ books, vocabulary, onRefresh }) {
 
   return (
     <section className="view-grid">
+      <div className="vocabulary-overview">
+        <div>
+          <span className="eyebrow">Vocabular personal</span>
+          <h2>{vocabulary.length} cuvinte salvate</h2>
+        </div>
+        <div className="vocabulary-counts">
+          <span><strong>{filtered.length}</strong> afisate</span>
+          <span><strong>{vocabulary.filter((item) => item.learned).length}</strong> invatate</span>
+        </div>
+      </div>
       <div className="filters-row">
         <label className="search-box">
           <Search size={16} />
@@ -879,12 +1036,18 @@ function VocabularyView({ books, vocabulary, onRefresh }) {
       <div className="vocab-table">
         {filtered.map((item) => (
           <article className={`vocab-row ${item.learned ? "learned" : ""}`} key={item.id}>
-            <div>
+            <button className="icon-button vocab-audio" onClick={() => speak(item.word)} title={`Pronunta ${item.word}`}>
+              <Volume2 size={17} />
+            </button>
+            <div className="vocab-word">
               <strong>{item.word}</strong>
               <span>{item.translation}</span>
+              <small>{item.bookTitle || "Carte necunoscuta"}</small>
             </div>
-            <p>{item.sentence}</p>
-            <p className="muted">{item.sentenceRo}</p>
+            <div className="vocab-context">
+              <p>{item.sentence}</p>
+              <p className="muted">{item.sentenceRo}</p>
+            </div>
             <button className="icon-button" onClick={() => markLearned(item)} title="Marcheaza invatat">
               <Check size={18} />
             </button>
@@ -917,9 +1080,7 @@ function LearningMode({ vocabulary, onRefresh }) {
 
   if (!vocabulary.length) return <div className="empty-state">Salveaza cuvinte din reader pentru flashcards.</div>;
 
-  const updateLearned = async () => {
-    if (!card) return;
-    await api.updateVocabulary(card.id, { learned: true });
+  const advanceCard = () => {
     setFlipped(false);
     if (cardIndex < group.length - 1) {
       setCardIndex(cardIndex + 1);
@@ -927,27 +1088,64 @@ function LearningMode({ vocabulary, onRefresh }) {
       setGroupIndex(groupIndex + 1);
       setCardIndex(0);
     }
+  };
+
+  const updateLearned = async () => {
+    if (!card) return;
+    await api.updateVocabulary(card.id, { learned: true });
+    advanceCard();
     await onRefresh();
   };
 
   return (
     <section className="learning-layout">
-      <div className="learning-controls">
-        <button className="icon-button" disabled={groupIndex === 0} onClick={() => setGroupIndex(groupIndex - 1)}>
-          <ChevronLeft size={18} />
-        </button>
-        <span>Grup {groupIndex + 1} / {groups.length}</span>
-        <button className="icon-button" disabled={groupIndex >= groups.length - 1} onClick={() => setGroupIndex(groupIndex + 1)}>
-          <ChevronRight size={18} />
-        </button>
+      <div className="learning-header">
+        <div>
+          <span className="eyebrow">Sesiune de repetare</span>
+          <h2>Invata cate un cuvant</h2>
+          <p>Citeste cuvantul, asculta pronuntia, apoi afiseaza traducerea si contextul.</p>
+        </div>
+        <div className="learning-group-picker">
+          <button className="icon-button" disabled={groupIndex === 0} onClick={() => setGroupIndex(groupIndex - 1)}>
+            <ChevronLeft size={18} />
+          </button>
+          <span>Grup {groupIndex + 1} din {groups.length}</span>
+          <button className="icon-button" disabled={groupIndex >= groups.length - 1} onClick={() => setGroupIndex(groupIndex + 1)}>
+            <ChevronRight size={18} />
+          </button>
+        </div>
       </div>
-      <ProgressBar value={group.length ? Math.round((learned / group.length) * 100) : 0} />
 
       {card && (
-        <button className={`flashcard ${flipped ? "flipped" : ""}`} onClick={() => setFlipped(!flipped)}>
-          <span>{flipped ? card.translation : card.word}</span>
-          <p>{flipped ? card.sentenceRo : card.sentence}</p>
-        </button>
+        <div className="learning-workspace">
+          <aside className="learning-progress-panel">
+            <span className="eyebrow">Progres grup</span>
+            <strong>{learned} din {group.length}</strong>
+            <ProgressBar value={group.length ? Math.round((learned / group.length) * 100) : 0} />
+            <dl>
+              <div><dt>Card curent</dt><dd>{cardIndex + 1}</dd></div>
+              <div><dt>Ramase</dt><dd>{Math.max(0, group.length - cardIndex - 1)}</dd></div>
+              <div><dt>Carte</dt><dd>{card.bookTitle || "Necunoscuta"}</dd></div>
+            </dl>
+          </aside>
+
+          <article className={`flashcard ${flipped ? "flipped" : ""}`}>
+            <div className="flashcard-topline">
+              <span>{flipped ? "Raspuns si context" : "Cuvant in engleza"}</span>
+              <strong>{cardIndex + 1} / {group.length}</strong>
+            </div>
+            <button className="flashcard-audio" onClick={() => speak(card.word)} title={`Pronunta ${card.word}`}>
+              <Volume2 size={20} />
+            </button>
+            <div className="flashcard-content">
+              <strong>{flipped ? card.translation : card.word}</strong>
+              <p>{flipped ? card.sentenceRo : card.sentence}</p>
+            </div>
+            <button className="reveal-button" onClick={() => setFlipped(!flipped)}>
+              {flipped ? "Vezi cuvantul" : "Arata traducerea"}
+            </button>
+          </article>
+        </div>
       )}
 
       <div className="learning-actions">
@@ -961,19 +1159,13 @@ function LearningMode({ vocabulary, onRefresh }) {
           <ChevronLeft size={16} />
           Inapoi
         </button>
+        <button className="secondary-button repeat-button" onClick={advanceCard}>
+          <RotateCcw size={16} />
+          Repeta mai tarziu
+        </button>
         <button className="primary-button" onClick={updateLearned}>
           <Check size={16} />
-          Stiu
-        </button>
-        <button
-          className="secondary-button"
-          onClick={() => {
-            setCardIndex(Math.min(group.length - 1, cardIndex + 1));
-            setFlipped(false);
-          }}
-        >
-          Urmator
-          <ChevronRight size={16} />
+          Stiu, urmatorul
         </button>
       </div>
     </section>

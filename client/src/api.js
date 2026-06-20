@@ -26,8 +26,11 @@ export const api = {
   books: () => request("/books"),
   book: (id) => request(`/books/${id}`),
   uploadBook: (formData) => request("/books", { method: "POST", body: formData }),
+  updateBook: (bookId, formData) => request(`/books/${bookId}`, { method: "PATCH", body: formData }),
   updateProgress: (bookId, payload) =>
     request(`/books/${bookId}/progress`, { method: "PATCH", body: JSON.stringify(payload) }),
+  saveReadingPosition: (bookId, payload) =>
+    request(`/books/${bookId}/saved-position`, { method: "PATCH", body: JSON.stringify(payload) }),
   addBookmark: (bookId, payload) =>
     request(`/books/${bookId}/bookmarks`, { method: "POST", body: JSON.stringify(payload) }),
   deleteBookmark: (bookId, bookmarkId) =>

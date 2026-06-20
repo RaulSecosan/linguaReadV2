@@ -878,6 +878,29 @@ h3 {
   display: inline;
 }
 
+.sentence.saved-position-sentence {
+  padding: 3px 4px;
+  border-radius: 4px;
+  background: #d8efe9;
+  box-shadow: inset 3px 0 0 var(--teal);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.reader-shell.dark .sentence.saved-position-sentence {
+  background: #244a43;
+  box-shadow: inset 3px 0 0 #72c7bb;
+}
+
+.saved-position-button {
+  border-color: #a9d2c9;
+}
+
+.resume-position-button:not(:disabled) {
+  border-color: #bdcddd;
+  color: #315f83;
+}
+
 .word-token {
   display: inline;
   padding: 1px 2px;
@@ -1818,5 +1841,554 @@ h3 {
 
   .cover {
     width: 88px;
+  }
+}
+
+/* Global theme and feature refinements */
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.theme-toggle {
+  box-shadow: var(--shadow-sm);
+}
+
+.app-shell.dark {
+  --ink: #e8efec;
+  --muted: #9caaa5;
+  --line: #33413d;
+  --line-strong: #45534f;
+  --surface: #1d2825;
+  --surface-soft: #222f2b;
+  --surface-muted: #293733;
+  --teal-soft: #203f3a;
+  --coral-soft: #472d28;
+  --blue-soft: #293c49;
+  color: var(--ink);
+  background: #111916;
+}
+
+.app-shell.dark .main-content {
+  background: #111916;
+}
+
+.app-shell.dark .topbar h1,
+.app-shell.dark h2,
+.app-shell.dark h3,
+.app-shell.dark .book-card h3 {
+  color: var(--ink);
+}
+
+.app-shell.dark input,
+.app-shell.dark select,
+.app-shell.dark .select-label,
+.app-shell.dark .search-box,
+.app-shell.dark .secondary-button,
+.app-shell.dark .icon-button,
+.app-shell.dark .filters-row,
+.app-shell.dark .learning-controls,
+.app-shell.dark .learning-header,
+.app-shell.dark .learning-progress-panel,
+.app-shell.dark .vocabulary-overview {
+  border-color: var(--line-strong);
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.app-shell.dark .metric-card,
+.app-shell.dark .book-card,
+.app-shell.dark .upload-panel,
+.app-shell.dark .vocab-row,
+.app-shell.dark .recommendation {
+  border-color: var(--line);
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.app-shell.dark .book-card p,
+.app-shell.dark .vocab-row p,
+.app-shell.dark .recommendation p,
+.app-shell.dark .learning-header p {
+  color: var(--muted);
+}
+
+.app-shell.dark .progress-bar {
+  background: #35423e;
+}
+
+.app-shell.dark .generated-cover {
+  background: #26322f;
+}
+
+.app-shell.dark .notice {
+  border-color: #38556a;
+  background: #243845;
+  color: #c0daeb;
+}
+
+.book-card-body {
+  position: relative;
+}
+
+.book-menu-button {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  width: 34px;
+  height: 34px;
+  min-height: 34px;
+  opacity: 0.72;
+}
+
+.book-menu-button:hover {
+  opacity: 1;
+}
+
+.book-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.book-facts span {
+  padding: 4px 6px;
+  border-radius: 5px;
+  background: var(--surface-muted);
+  color: #52615c;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.app-shell.dark .book-facts span {
+  color: #bcc9c5;
+}
+
+.modal-backdrop {
+  position: fixed;
+  z-index: 100;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(10, 17, 15, 0.58);
+  backdrop-filter: blur(5px);
+  animation: viewEnter 180ms ease both;
+}
+
+.book-settings-modal {
+  display: grid;
+  gap: 15px;
+  width: min(460px, 100%);
+  max-height: calc(100vh - 36px);
+  overflow-y: auto;
+  padding: 21px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 28px 90px rgba(8, 16, 14, 0.3);
+}
+
+.book-settings-modal label {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.book-settings-preview {
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-soft);
+}
+
+.book-settings-preview .cover {
+  width: 74px;
+  height: 104px;
+  min-height: 104px;
+  border-radius: 5px;
+}
+
+.book-settings-preview > div {
+  display: grid;
+  gap: 5px;
+}
+
+.book-settings-preview span,
+.book-settings-preview small {
+  color: var(--muted);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+  padding-top: 3px;
+}
+
+.vocabulary-overview {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.vocabulary-overview h2 {
+  margin: 4px 0 0;
+  font-size: 22px;
+}
+
+.vocabulary-counts {
+  display: flex;
+  gap: 8px;
+}
+
+.vocabulary-counts span {
+  min-width: 105px;
+  padding: 10px 12px;
+  border-radius: 7px;
+  background: var(--surface-muted);
+  color: var(--muted);
+  font-size: 11px;
+  text-align: center;
+}
+
+.vocabulary-counts strong {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--ink);
+  font-size: 20px;
+}
+
+.vocab-row {
+  grid-template-columns: 42px minmax(150px, 0.7fr) minmax(300px, 2fr) 42px;
+}
+
+.vocab-audio {
+  color: var(--teal);
+}
+
+.vocab-word,
+.vocab-context {
+  min-width: 0;
+}
+
+.vocab-word small {
+  display: block;
+  margin-top: 3px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vocab-context {
+  display: grid;
+  gap: 5px;
+}
+
+.learning-layout {
+  max-width: 980px;
+}
+
+.learning-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.learning-header h2 {
+  margin: 4px 0 5px;
+  font-size: 22px;
+}
+
+.learning-header p {
+  max-width: 610px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.learning-group-picker {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex: 0 0 auto;
+}
+
+.learning-group-picker span {
+  min-width: 115px;
+  font-size: 12px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.learning-workspace {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr);
+  gap: 14px;
+}
+
+.learning-progress-panel {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.learning-progress-panel > strong {
+  font-size: 25px;
+}
+
+.learning-progress-panel dl {
+  display: grid;
+  gap: 0;
+  margin: 3px 0 0;
+}
+
+.learning-progress-panel dl div {
+  display: grid;
+  gap: 4px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.learning-progress-panel dt {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.learning-progress-panel dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.flashcard {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  align-content: initial;
+  justify-items: stretch;
+  gap: 20px;
+  min-height: 400px;
+  padding: 24px 28px;
+  cursor: default;
+  text-align: left;
+}
+
+.flashcard-topline {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: #afc2bc;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.flashcard-topline strong {
+  color: #fff;
+}
+
+.flashcard-audio {
+  position: absolute;
+  top: 57px;
+  right: 27px;
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  cursor: pointer;
+}
+
+.flashcard-content {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 18px;
+  padding: 32px 45px;
+  text-align: center;
+}
+
+.flashcard-content > strong {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  font-family: Literata, Georgia, serif;
+  font-size: clamp(36px, 6vw, 62px);
+  line-height: 1.08;
+}
+
+.flashcard-content p {
+  max-width: 600px;
+  margin: 0;
+  color: #dce8e4;
+  line-height: 1.6;
+}
+
+.reveal-button {
+  justify-self: center;
+  min-height: 42px;
+  padding: 0 16px;
+  border: 1px solid rgba(255, 255, 255, 0.26);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.09);
+  color: #fff;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.reveal-button:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.learning-actions {
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.repeat-button {
+  color: #a64c39;
+}
+
+.app-shell.dark .book-settings-modal,
+.app-shell.dark .book-settings-preview,
+.app-shell.dark .learning-actions {
+  border-color: var(--line);
+  background: var(--surface);
+}
+
+@media (max-width: 920px) {
+  .topbar-actions {
+    width: 100%;
+  }
+
+  .topbar-actions .select-label {
+    flex: 1 1 auto;
+  }
+
+  .vocab-row {
+    grid-template-columns: 42px minmax(0, 1fr) 42px;
+  }
+
+  .vocab-context {
+    grid-column: 2 / -1;
+  }
+
+  .learning-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .learning-progress-panel {
+    grid-template-columns: minmax(120px, auto) minmax(0, 1fr);
+    align-items: center;
+  }
+
+  .learning-progress-panel dl {
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .learning-progress-panel dl div {
+    padding: 8px;
+    border-bottom: 0;
+    border-right: 1px solid var(--line);
+  }
+}
+
+@media (max-width: 650px) {
+  .topbar-actions,
+  .vocabulary-overview,
+  .learning-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .topbar-actions .theme-toggle {
+    width: 100%;
+  }
+
+  .vocabulary-counts {
+    width: 100%;
+  }
+
+  .vocabulary-counts span {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .learning-group-picker {
+    justify-content: space-between;
+  }
+
+  .learning-progress-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .learning-progress-panel dl {
+    grid-column: auto;
+    grid-template-columns: 1fr;
+  }
+
+  .learning-progress-panel dl div {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .flashcard {
+    min-height: 360px;
+    padding: 20px;
+  }
+
+  .flashcard-content {
+    padding: 30px 8px;
+  }
+
+  .learning-actions > * {
+    width: 100%;
+  }
+
+  .modal-actions {
+    flex-direction: column-reverse;
+  }
+
+  .modal-actions > * {
+    width: 100%;
   }
 }
