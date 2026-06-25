@@ -3382,3 +3382,117 @@ h3 {
     width: 100%;
   }
 }
+
+@media (max-width: 650px) {
+  .view-grid,
+  .vocabulary-overview,
+  .filters-row,
+  .vocab-table,
+  .vocab-row {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .vocabulary-overview,
+  .filters-row {
+    overflow: hidden;
+  }
+
+  .filters-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 9px;
+  }
+
+  .filters-row > *,
+  .filters-row > select,
+  .filters-row > a,
+  .search-box {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .vocab-row,
+  .vocab-row:nth-child(n) {
+    grid-template-columns: 42px minmax(0, 1fr) 42px;
+    gap: 10px;
+    padding: 12px;
+    overflow: hidden;
+  }
+
+  .vocab-row .vocab-word {
+    min-width: 0;
+  }
+
+  .vocab-row .vocab-word strong,
+  .vocab-row .vocab-word span,
+  .vocab-row .vocab-word small {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+
+  .vocab-row .vocab-context {
+    grid-column: 1 / -1;
+    min-width: 0;
+    width: 100%;
+    padding: 10px;
+    border-top: 1px solid var(--line);
+    border-radius: 7px;
+    background: var(--surface-soft);
+  }
+
+  .vocab-row .vocab-context p {
+    font-size: 12px;
+    line-height: 1.45;
+  }
+
+  .reader-inspector.has-selection {
+    border: 2px solid rgba(22, 122, 111, 0.72);
+    background: linear-gradient(180deg, #ffffff 0%, #eef8f5 100%);
+    box-shadow: 0 18px 54px rgba(8, 16, 14, 0.32), 0 0 0 1px rgba(255, 255, 255, 0.8) inset;
+  }
+
+  .reader-inspector.has-selection .inspector-block {
+    position: relative;
+    padding-top: 18px;
+  }
+
+  .reader-inspector.has-selection .inspector-block::before {
+    position: absolute;
+    top: 7px;
+    left: 50%;
+    width: 46px;
+    height: 4px;
+    border-radius: 999px;
+    background: rgba(13, 98, 89, 0.38);
+    content: "";
+    transform: translateX(-50%);
+  }
+
+  .reader-inspector.has-selection .inspector-heading h3 {
+    color: #0d6259;
+  }
+
+  .reader-inspector.has-selection .translation-card {
+    border-color: rgba(22, 122, 111, 0.42);
+    background: #dff1ed;
+    box-shadow: inset 4px 0 0 var(--teal);
+  }
+
+  .reader-inspector.has-selection .translation-card strong {
+    color: #0b5b52;
+  }
+
+  .app-shell.dark .reader-inspector.has-selection {
+    border-color: rgba(102, 195, 183, 0.72);
+    background: linear-gradient(180deg, #182321 0%, #203b34 100%);
+  }
+
+  .app-shell.dark .reader-inspector.has-selection .translation-card {
+    border-color: #386e60;
+    background: #203d35;
+  }
+}
