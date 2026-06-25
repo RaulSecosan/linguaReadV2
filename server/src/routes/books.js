@@ -49,7 +49,8 @@ router.get("/:id", async (request, response) => {
   let book = data.books.find((item) => item.id === request.params.id);
   if (!book) return response.status(404).json({ error: "Cartea nu a fost gasita." });
 
-  if (!book.chapters?.length || (book.structureVersion || 0) < 2) {
+  const requiredStructureVersion = book.fileType === "epub" ? 3 : 2;
+  if (!book.chapters?.length || (book.structureVersion || 0) < requiredStructureVersion) {
     let structure;
     if (book.storedPath) {
       try {
@@ -62,7 +63,9 @@ router.get("/:id", async (request, response) => {
     }
     await mutateDb((nextData) => {
       const storedBook = nextData.books.find((item) => item.id === book.id);
-      Object.assign(storedBook, structure, { structureVersion: 2 });
+      Object.assign(storedBook, structure, { structureVersion: requiredStructureVersion });
+      if (structure.metadata?.title && !storedBook.title) storedBook.title = structure.metadata.title;
+      if (structure.metadata?.author && !storedBook.author) storedBook.author = structure.metadata.author;
     });
     data = await readDb();
     book = data.books.find((item) => item.id === request.params.id);
@@ -83,14 +86,14 @@ router.post("/", upload.fields([{ name: "book", maxCount: 1 }, { name: "cover", 
   const analysis = analyzeText(text);
   const book = {
     id: uuid(),
-    title: request.body.title || path.basename(bookFile.originalname, path.extname(bookFile.originalname)),
-    author: request.body.author || "",
+    title: request.body.title || extracted.metadata?.title || path.basename(bookFile.originalname, path.extname(bookFile.originalname)),
+    author: request.body.author || extracted.metadata?.author || "",
     fileType,
     originalName: bookFile.originalname,
     storedPath: bookFile.path,
     coverUrl: coverFile ? `/uploads/covers/${path.basename(coverFile.path)}` : "",
     text,
-    structureVersion: 2,
+    structureVersion: extracted.structureVersion || 2,
     chapters: extracted.chapters,
     sourcePages: extracted.sourcePages,
     wordCount: text.split(/\s+/).filter(Boolean).length,
@@ -131,6 +134,26 @@ router.patch("/:id", upload.single("cover"), async (request, response) => {
 
   if (!updated) return response.status(404).json({ error: "Cartea nu a fost gasita." });
   response.json(updated);
+});
+
+router.delete("/:id", async (request, response) => {
+  const data = await readDb();
+  const book = data.books.find((item) => item.id === request.params.id);
+  if (!book) return response.status(404).json({ error: "Cartea nu a fost gasita." });
+
+  await mutateDb((nextData) => {
+    nextData.books = nextData.books.filter((item) => item.id !== request.params.id);
+    if (request.query.keepVocabulary !== "true") {
+      nextData.vocabulary = nextData.vocabulary.filter((item) => item.bookId !== request.params.id);
+    }
+  });
+
+  const files = [
+    book.storedPath,
+    book.coverUrl ? path.resolve(uploadRoot, book.coverUrl.replace(/^\/uploads\//, "")) : "",
+  ].filter(Boolean);
+  await Promise.all(files.map((file) => fs.unlink(file).catch(() => undefined)));
+  response.status(204).end();
 });
 
 router.patch("/:id/progress", async (request, response) => {

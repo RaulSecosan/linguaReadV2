@@ -24,6 +24,84 @@ const summarySchema = {
   required: ["summary", "mainIdeas"],
 };
 
+const quizSchema = {
+  type: "object",
+  properties: {
+    questions: {
+      type: "array",
+      minItems: 3,
+      maxItems: 10,
+      items: {
+        type: "object",
+        properties: {
+          question: { type: "string" },
+          options: {
+            type: "array",
+            minItems: 4,
+            maxItems: 4,
+            items: { type: "string" },
+          },
+          correctIndex: { type: "integer", minimum: 0, maximum: 3 },
+          explanation: { type: "string" },
+        },
+        required: ["question", "options", "correctIndex", "explanation"],
+      },
+    },
+  },
+  required: ["questions"],
+};
+
+const coachSchema = {
+  type: "object",
+  properties: {
+    headline: { type: "string" },
+    insight: { type: "string" },
+    dailyTarget: { type: "integer", minimum: 3, maximum: 20 },
+    focusAreas: {
+      type: "array",
+      minItems: 2,
+      maxItems: 4,
+      items: {
+        type: "object",
+        properties: {
+          title: { type: "string" },
+          detail: { type: "string" },
+          score: { type: "integer", minimum: 0, maximum: 100 },
+        },
+        required: ["title", "detail", "score"],
+      },
+    },
+    plan: {
+      type: "array",
+      minItems: 3,
+      maxItems: 5,
+      items: {
+        type: "object",
+        properties: {
+          title: { type: "string" },
+          detail: { type: "string" },
+          minutes: { type: "integer", minimum: 1, maximum: 60 },
+        },
+        required: ["title", "detail", "minutes"],
+      },
+    },
+    recommendations: {
+      type: "array",
+      minItems: 2,
+      maxItems: 5,
+      items: {
+        type: "object",
+        properties: {
+          title: { type: "string" },
+          detail: { type: "string" },
+        },
+        required: ["title", "detail"],
+      },
+    },
+  },
+  required: ["headline", "insight", "dailyTarget", "focusAreas", "plan", "recommendations"],
+};
+
 const localDictionary = {
   learning: "invatare",
   language: "limba",
@@ -146,6 +224,106 @@ ${JSON.stringify(partials)}`;
   return { ...finalSummary, provider: selectedModel, parts: chunks.length };
 }
 
+export async function generateChapterQuiz({ text, model, bookTitle, chapterTitle, count = 5 }) {
+  const cleanText = String(text || "").trim();
+  if (cleanText.length < 300) {
+    const error = new Error("Capitolul nu contine suficient text pentru un quiz.");
+    error.status = 400;
+    throw error;
+  }
+
+  const questionCount = Math.max(3, Math.min(10, Number(count) || 5));
+  const source = cleanText.length > 30000
+    ? `${cleanText.slice(0, 15000)}\n\n[CONTINUARE CAPITOL]\n\n${cleanText.slice(-15000)}`
+    : cleanText;
+  const prompt = `Ești un profesor care verifică înțelegerea unei cărți citite în limba engleză.
+Generează exact ${questionCount} întrebări factuale în limba română despre capitolul "${chapterTitle}" din cartea "${bookTitle}".
+Întrebările trebuie să verifice evenimente, personaje, locuri, motivații și detalii importante din text.
+Pentru fiecare întrebare oferă exact 4 variante distincte, un singur răspuns corect, indexat de la 0 la 3, și o explicație scurtă în română.
+Nu inventa fapte care nu apar în text. Evită întrebările despre gramatică și evită variantele evidente sau absurde.
+Returnează exclusiv JSON conform schemei.
+TEXT_CAPITOL:
+${source}`;
+  const parsed = parseJson(await callSelectedModel(model === "ollama" ? "ollama" : "gpt", prompt, quizSchema, {
+    numPredict: 1800,
+    timeout: 120000,
+  }));
+  if (!isValidQuiz(parsed, questionCount)) {
+    const error = new Error("Modelul nu a returnat un quiz valid. Incearca din nou.");
+    error.status = 502;
+    throw error;
+  }
+  return {
+    questions: parsed.questions.slice(0, questionCount).map((question, index) => ({
+      id: `question-${index + 1}`,
+      question: cleanModelText(question.question, 400),
+      options: question.options.slice(0, 4).map((option) => cleanModelText(option, 220)),
+      correctIndex: Math.max(0, Math.min(3, Number(question.correctIndex))),
+      explanation: cleanModelText(question.explanation, 700),
+    })),
+    provider: model === "ollama" ? "ollama" : "gpt",
+  };
+}
+
+export async function generateCoach({ vocabulary, books, statistics, model }) {
+  const vocabularySample = vocabulary.slice(-80).map((item) => ({
+    word: item.word,
+    sentence: item.sentence,
+    learned: Boolean(item.learned),
+    book: item.bookTitle,
+  }));
+  const bookProgress = books.map((book) => ({
+    title: book.title,
+    level: book.analysis?.level,
+    progress: book.progress?.percent || 0,
+    pages: book.pageCount || 0,
+  }));
+  const prompt = `Ești AI Reading Coach pentru o aplicație de învățare a limbii engleze prin lectură.
+Analizează datele reale de mai jos și creează un plan personalizat, practic și măsurabil.
+Identifică tipare numai dacă sunt susținute de cuvintele și propozițiile furnizate.
+Un phrasal verb trebuie să conțină un verb urmat de o particulă, de exemplu "give up" sau "look after". Nu numi cuvinte izolate precum "demand", "tortoise" sau "hair" phrasal verbs ori verbe.
+Verifică rolul cuvântului în propoziție înainte să îl clasifici. Dacă nu există suficiente dovezi pentru o categorie, spune explicit că sunt necesare mai multe date.
+Toate titlurile și explicațiile trebuie să fie în limba română.
+Scorul unei zone reprezintă nivelul estimat de stăpânire, unde 0 este foarte slab și 100 este foarte bun; folosește valori realiste între 20 și 90.
+Targetul zilnic trebuie să fie realist, între 5 și 15 cuvinte.
+Planul trebuie să combine lectură, repetarea vocabularului și quiz-uri pe capitole.
+Recomandă numai acțiuni disponibile în aplicație. Nu recomanda site-uri externe și nu inventa cărți sau funcții.
+Nu pretinde că utilizatorul are o problemă dacă datele nu o susțin. Scrie exclusiv în limba română.
+Returnează exclusiv JSON conform schemei.
+DATE_UTILIZATOR:
+${JSON.stringify({ statistics, books: bookProgress, vocabulary: vocabularySample })}`;
+  const parsed = parseJson(await callSelectedModel(model === "ollama" ? "ollama" : "gpt", prompt, coachSchema, {
+    numPredict: 1800,
+    timeout: 90000,
+  }));
+  if (!isValidCoach(parsed)) {
+    const error = new Error("Modelul nu a returnat o analiza valida pentru AI Coach.");
+    error.status = 502;
+    throw error;
+  }
+  return {
+    headline: cleanModelText(parsed.headline, 220),
+    insight: cleanModelText(parsed.insight, 1200),
+    dailyTarget: Math.max(5, Math.min(15, Number(parsed.dailyTarget) || 10)),
+    focusAreas: parsed.focusAreas.slice(0, 4).map((area) => ({
+      title: cleanModelText(area.title, 120),
+      detail: cleanModelText(area.detail, 700),
+      score: Math.max(0, Math.min(100, Number(area.score) || 50)),
+    })),
+    plan: parsed.plan.slice(0, 5).map((item) => ({
+      title: cleanModelText(item.title, 120),
+      detail: cleanModelText(item.detail, 700),
+      minutes: Math.max(1, Math.min(60, Number(item.minutes) || 10)),
+    })),
+    recommendations: parsed.recommendations.slice(0, 5).map((item) => ({
+      title: cleanModelText(item.title, 140),
+      detail: cleanModelText(item.detail, 700),
+    })),
+    provider: model === "ollama" ? "ollama" : "gpt",
+    generatedAt: new Date().toISOString(),
+  };
+}
+
 export function difficultyForText(text) {
   return analyzeText(text);
 }
@@ -189,10 +367,10 @@ export function buildCoach({ vocabulary, books, statistics }) {
 
 async function callSelectedModel(model, prompt, schema, options = {}) {
   if (model === "ollama") return callOllama(prompt, schema, options);
-  return callOpenAI(prompt);
+  return callOpenAI(prompt, schema);
 }
 
-async function callOpenAI(prompt) {
+async function callOpenAI(prompt, schema) {
   if (!process.env.OPENAI_API_KEY) {
     const error = new Error("ChatGPT API nu este configurat. Adauga OPENAI_API_KEY sau selecteaza Mistral local.");
     error.status = 503;
@@ -211,6 +389,14 @@ async function callOpenAI(prompt) {
           { role: "system", content: "Return valid JSON only." },
           { role: "user", content: prompt },
         ],
+        response_format: schema ? {
+          type: "json_schema",
+          json_schema: {
+            name: "linguaread_response",
+            strict: true,
+            schema: strictJsonSchema(schema),
+          },
+        } : { type: "json_object" },
         temperature: 0.2,
       }),
     });
@@ -230,12 +416,25 @@ async function callOpenAI(prompt) {
   }
 }
 
+function strictJsonSchema(schema) {
+  if (!schema || typeof schema !== "object") return schema;
+  if (Array.isArray(schema)) return schema.map(strictJsonSchema);
+  const normalized = Object.fromEntries(
+    Object.entries(schema).map(([key, value]) => [key, strictJsonSchema(value)]),
+  );
+  if (normalized.type === "object") {
+    normalized.additionalProperties = false;
+    normalized.required = Object.keys(normalized.properties || {});
+  }
+  return normalized;
+}
+
 async function callOllama(prompt, schema, options) {
   try {
     const response = await fetch(`${process.env.OLLAMA_BASE_URL || "http://localhost:11434"}/api/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      signal: AbortSignal.timeout(schema === summarySchema ? 120000 : 45000),
+      signal: AbortSignal.timeout(options.timeout || (schema === summarySchema ? 120000 : 45000)),
       body: JSON.stringify({
         model: process.env.OLLAMA_MODEL || "mistral:7b",
         prompt,
@@ -309,6 +508,33 @@ function isValidSummary(value) {
     && value.summary.trim()
     && Array.isArray(value.mainIdeas)
     && value.mainIdeas.length;
+}
+
+function isValidQuiz(value, requestedCount) {
+  return value
+    && Array.isArray(value.questions)
+    && value.questions.length >= Math.min(3, requestedCount)
+    && value.questions.every((question) =>
+      typeof question.question === "string"
+      && Array.isArray(question.options)
+      && question.options.length === 4
+      && question.options.every((option) => typeof option === "string" && option.trim())
+      && Number.isInteger(Number(question.correctIndex))
+      && Number(question.correctIndex) >= 0
+      && Number(question.correctIndex) <= 3
+      && typeof question.explanation === "string");
+}
+
+function isValidCoach(value) {
+  return value
+    && typeof value.headline === "string"
+    && typeof value.insight === "string"
+    && Number.isFinite(Number(value.dailyTarget))
+    && Array.isArray(value.focusAreas)
+    && value.focusAreas.length >= 2
+    && Array.isArray(value.plan)
+    && value.plan.length >= 3
+    && Array.isArray(value.recommendations);
 }
 
 function splitTextForSummary(text, maxChars) {

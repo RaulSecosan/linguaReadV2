@@ -27,6 +27,8 @@ export const api = {
   book: (id) => request(`/books/${id}`),
   uploadBook: (formData) => request("/books", { method: "POST", body: formData }),
   updateBook: (bookId, formData) => request(`/books/${bookId}`, { method: "PATCH", body: formData }),
+  deleteBook: (bookId, keepVocabulary = false) =>
+    request(`/books/${bookId}?keepVocabulary=${keepVocabulary}`, { method: "DELETE" }),
   updateProgress: (bookId, payload) =>
     request(`/books/${bookId}/progress`, { method: "PATCH", body: JSON.stringify(payload) }),
   saveReadingPosition: (bookId, payload) =>
@@ -44,7 +46,11 @@ export const api = {
     request("/ai/translate", { ...options, method: "POST", body: JSON.stringify(payload) }),
   summary: (payload) => request("/ai/summary", { method: "POST", body: JSON.stringify(payload) }),
   difficulty: (payload) => request("/ai/difficulty", { method: "POST", body: JSON.stringify(payload) }),
+  quiz: (payload) => request("/ai/quiz", { method: "POST", body: JSON.stringify(payload) }),
   coach: () => request("/ai/coach"),
+  generateCoach: (model = "gpt") => request("/ai/coach", { method: "POST", body: JSON.stringify({ model }) }),
+  updateCoachTask: (date, taskId, completed) =>
+    request(`/ai/coach/tasks/${date}/${taskId}`, { method: "PATCH", body: JSON.stringify({ completed }) }),
   statistics: () => request("/statistics"),
   exportUrl: (params = {}) => `${API_BASE}/vocabulary/export${toQuery(params)}`,
 };

@@ -5,6 +5,9 @@ import { v4 as uuid } from "uuid";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dbPath = path.resolve(__dirname, "../../data/db.json");
+const backupPath = `${dbPath}.bak`;
+let writeQueue = Promise.resolve();
+let mutationQueue = Promise.resolve();
 
 const sampleText = `Learning a new language through reading is powerful because every sentence gives context. When you meet a new word inside a story, your brain connects it with characters, actions, and emotion. This context makes vocabulary easier to remember.
 
@@ -38,28 +41,84 @@ const seed = {
   vocabulary: [],
 };
 
+const emptyDb = {
+  books: [],
+  vocabulary: [],
+  coach: {},
+};
+
+function normalizeDb(data) {
+  return {
+    ...emptyDb,
+    ...(data && typeof data === "object" ? data : {}),
+    books: Array.isArray(data?.books) ? data.books : [],
+    vocabulary: Array.isArray(data?.vocabulary) ? data.vocabulary : [],
+    coach: data?.coach && typeof data.coach === "object" ? data.coach : {},
+  };
+}
+
+async function readJsonFile(filePath) {
+  const raw = await fs.readFile(filePath, "utf8");
+  if (!raw.trim()) throw new Error("Database file is empty");
+  return normalizeDb(JSON.parse(raw));
+}
+
 export async function ensureDatabase() {
   await fs.mkdir(path.dirname(dbPath), { recursive: true });
   try {
     await fs.access(dbPath);
   } catch {
-    await writeDb(seed);
+    await writeDbImmediate(seed);
   }
 }
 
 export async function readDb() {
   await ensureDatabase();
-  const raw = await fs.readFile(dbPath, "utf8");
-  return JSON.parse(raw);
+  try {
+    return await readJsonFile(dbPath);
+  } catch (error) {
+    try {
+      const backup = await readJsonFile(backupPath);
+      await writeDb(backup);
+      return backup;
+    } catch {
+      const recovered = normalizeDb(seed);
+      await writeDb(recovered);
+      return recovered;
+    }
+  }
+}
+
+async function writeDbImmediate(data) {
+  const normalized = normalizeDb(data);
+  const payload = `${JSON.stringify(normalized, null, 2)}\n`;
+  const tempPath = `${dbPath}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
+  try {
+    await readJsonFile(dbPath);
+    await fs.copyFile(dbPath, backupPath);
+  } catch {
+    // The first write or a corrupt database has no useful previous state to back up.
+  }
+  await fs.writeFile(tempPath, payload);
+  await fs.rename(tempPath, dbPath);
 }
 
 export async function writeDb(data) {
-  await fs.writeFile(dbPath, `${JSON.stringify(data, null, 2)}\n`);
+  writeQueue = writeQueue.then(() => writeDbImmediate(data), () => writeDbImmediate(data));
+  return writeQueue;
 }
 
 export async function mutateDb(mutator) {
-  const data = await readDb();
-  const result = await mutator(data);
-  await writeDb(data);
-  return result;
+  mutationQueue = mutationQueue.then(async () => {
+    const data = await readDb();
+    const result = await mutator(data);
+    await writeDbImmediate(data);
+    return result;
+  }, async () => {
+    const data = await readDb();
+    const result = await mutator(data);
+    await writeDbImmediate(data);
+    return result;
+  });
+  return mutationQueue;
 }

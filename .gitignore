@@ -3,6 +3,7 @@ dist
 .env
 .DS_Store
 server/data/db.json
+server/data/db.json.bak
 server/uploads/*
 !server/uploads/.gitkeep
 !server/uploads/covers
