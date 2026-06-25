@@ -179,9 +179,13 @@ router.patch("/:id/saved-position", async (request, response) => {
     if (!book) return null;
     book.savedPosition = {
       page: Math.max(0, Number(request.body.page) || 0),
+      sourcePage: request.body.sourcePage ? Math.max(1, Number(request.body.sourcePage) || 1) : null,
+      chapterId: String(request.body.chapterId || ""),
+      sentenceIndex: Math.max(0, Number(request.body.sentenceIndex) || 0),
       percent: Math.max(0, Math.min(100, Number(request.body.percent) || 0)),
       chapterTitle: String(request.body.chapterTitle || ""),
       sentence: String(request.body.sentence || ""),
+      anchorText: String(request.body.anchorText || request.body.sentence || ""),
       savedAt: new Date().toISOString(),
     };
     return book.savedPosition;

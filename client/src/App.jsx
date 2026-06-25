@@ -54,14 +54,16 @@ const splitSentences = (text = "") => {
   return matches?.map((sentence) => sentence.trim()).filter(Boolean) || [];
 };
 
+const normalizeAnchorText = (text = "") => text.replace(/\s+/g, " ").trim().slice(0, 220);
+
 const paginateBook = (book, wordsPerPage) => {
   if (!book) return { pages: [], contents: [] };
 
   if (book.sourcePages?.length) {
     const pages = book.sourcePages.map((text, index) => ({
       text,
-      chapterTitle:
-        book.chapters?.find((chapter) => index >= chapter.startPage && index <= chapter.endPage)?.title || "Inceput",
+      chapterId: book.chapters?.find((chapter) => index >= chapter.startPage && index <= chapter.endPage)?.id,
+      chapterTitle: book.chapters?.find((chapter) => index >= chapter.startPage && index <= chapter.endPage)?.title || "Inceput",
       sourcePage: index + 1,
     }));
     const contents = (book.chapters || []).map((chapter) => ({
@@ -82,19 +84,58 @@ const paginateBook = (book, wordsPerPage) => {
     const sentences = splitSentences(chapter.text);
     let pageText = "";
     let wordCount = 0;
-    sentences.forEach((sentence) => {
+    let sentenceStartIndex = 0;
+    sentences.forEach((sentence, sentenceIndex) => {
       const sentenceWords = sentence.split(/\s+/).filter(Boolean).length;
       if (pageText && wordCount + sentenceWords > wordsPerPage) {
-        pages.push({ text: pageText.trim(), chapterTitle: chapter.title });
+        pages.push({
+          text: pageText.trim(),
+          chapterId: chapter.id,
+          chapterTitle: chapter.title,
+          sentenceStartIndex,
+          sentenceEndIndex: sentenceIndex - 1,
+        });
         pageText = "";
         wordCount = 0;
+        sentenceStartIndex = sentenceIndex;
       }
       pageText += `${sentence} `;
       wordCount += sentenceWords;
     });
-    if (pageText.trim()) pages.push({ text: pageText.trim(), chapterTitle: chapter.title });
+    if (pageText.trim()) {
+      pages.push({
+        text: pageText.trim(),
+        chapterId: chapter.id,
+        chapterTitle: chapter.title,
+        sentenceStartIndex,
+        sentenceEndIndex: Math.max(sentenceStartIndex, sentences.length - 1),
+      });
+    }
   });
   return { pages, contents };
+};
+
+const resolveSavedPageIndex = (savedPosition, pages) => {
+  if (!savedPosition || !pages.length) return null;
+  if (savedPosition.sourcePage) {
+    const sourceIndex = pages.findIndex((item) => item.sourcePage === Number(savedPosition.sourcePage));
+    if (sourceIndex >= 0) return sourceIndex;
+  }
+  if (savedPosition.chapterId && Number.isFinite(Number(savedPosition.sentenceIndex))) {
+    const sentenceIndex = Number(savedPosition.sentenceIndex);
+    const semanticIndex = pages.findIndex((item) => (
+      item.chapterId === savedPosition.chapterId
+      && Number(item.sentenceStartIndex) <= sentenceIndex
+      && Number(item.sentenceEndIndex) >= sentenceIndex
+    ));
+    if (semanticIndex >= 0) return semanticIndex;
+  }
+  const anchor = normalizeAnchorText(savedPosition.anchorText || savedPosition.sentence || "");
+  if (anchor) {
+    const foundIndex = pages.findIndex((item) => normalizeAnchorText(item.text).includes(anchor));
+    if (foundIndex >= 0) return foundIndex;
+  }
+  return Math.max(0, Math.min(Number(savedPosition.page) || 0, pages.length - 1));
 };
 
 const speak = (text, lang = "en-US") => {
@@ -673,6 +714,7 @@ function Reader({ book, vocabulary, onRefresh, onNotice, theme, onToggleTheme })
   const [showReaderSettings, setShowReaderSettings] = useState(false);
   const tocListRef = useRef(null);
   const activeTocRef = useRef(null);
+  const savedSentenceRef = useRef(null);
 
   const wordsPerPage = Math.max(180, Math.round(430 * (pageWidth / 760) * (18 / fontSize)));
   const pagination = useMemo(() => paginateBook(book, wordsPerPage), [book, wordsPerPage]);
@@ -690,6 +732,25 @@ function Reader({ book, vocabulary, onRefresh, onNotice, theme, onToggleTheme })
   const progressPercent = pagination.pages.length
     ? Math.round(((currentPage + 1) / pagination.pages.length) * 100)
     : 0;
+  const savedPageIndex = useMemo(
+    () => resolveSavedPageIndex(book?.savedPosition, pagination.pages),
+    [book?.savedPosition, pagination.pages],
+  );
+  const savedLocalSentenceIndex = useMemo(() => {
+    if (!book?.savedPosition || !page) return null;
+    const savedSentenceIndex = Number(book.savedPosition.sentenceIndex);
+    if (
+      book.savedPosition.chapterId
+      && page.chapterId === book.savedPosition.chapterId
+      && Number.isFinite(savedSentenceIndex)
+      && Number(page.sentenceStartIndex) <= savedSentenceIndex
+      && Number(page.sentenceEndIndex) >= savedSentenceIndex
+    ) {
+      return savedSentenceIndex - Number(page.sentenceStartIndex);
+    }
+    if (savedPageIndex === currentPage) return 0;
+    return null;
+  }, [book?.savedPosition, currentPage, page, savedPageIndex]);
 
   useEffect(() => {
     localStorage.setItem("lr-font-size", String(fontSize));
@@ -762,14 +823,29 @@ function Reader({ book, vocabulary, onRefresh, onNotice, theme, onToggleTheme })
     }
   }, [activeChapter?.id]);
 
+  useEffect(() => {
+    if (savedPageIndex !== currentPage || savedLocalSentenceIndex === null) return;
+    const target = savedSentenceRef.current;
+    if (!target) return;
+    const frame = window.requestAnimationFrame(() => {
+      target.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [currentPage, savedLocalSentenceIndex, savedPageIndex]);
+
   if (!book) return <div className="empty-state">Alege sau incarca o carte.</div>;
 
   const saveReadingPosition = async () => {
+    const anchorText = normalizeAnchorText(sentences[0] || page?.text || "");
     await api.saveReadingPosition(book.id, {
       page: currentPage,
+      sourcePage: page?.sourcePage,
+      chapterId: page?.chapterId || activeChapter?.id,
+      sentenceIndex: page?.sentenceStartIndex ?? 0,
       percent: progressPercent,
       chapterTitle: page?.chapterTitle || book.title,
       sentence: sentences[0] || "",
+      anchorText,
     });
     await onRefresh();
     onNotice(`Pagina ${currentPage + 1} a fost salvata.`);
@@ -825,6 +901,22 @@ function Reader({ book, vocabulary, onRefresh, onNotice, theme, onToggleTheme })
     setSummary(null);
     setShowReaderSettings(false);
     saveProgress(safePage);
+  };
+
+  const goToSavedPosition = async () => {
+    try {
+      const latestBook = await api.book(book.id);
+      const latestPagination = paginateBook(latestBook, wordsPerPage);
+      const nextPage = resolveSavedPageIndex(latestBook.savedPosition, latestPagination.pages);
+      await onRefresh();
+      if (nextPage === null) {
+        onNotice("Nu exista o pagina salvata pentru aceasta carte.");
+        return;
+      }
+      goToPage(nextPage);
+    } catch (error) {
+      onNotice(error.message);
+    }
   };
 
   const changeModel = (nextModel) => {
@@ -892,12 +984,18 @@ function Reader({ book, vocabulary, onRefresh, onNotice, theme, onToggleTheme })
         </button>
         <button
           className="secondary-button resume-position-button reader-setting-control"
-          disabled={!book.savedPosition}
-          onClick={() => goToPage(book.savedPosition?.page || 0)}
-          title={book.savedPosition ? `Pagina salvata: ${book.savedPosition.page + 1}` : "Nu exista o pagina salvata"}
+          onClick={goToSavedPosition}
+          title={savedPageIndex !== null ? `Pagina salvata: ${savedPageIndex + 1}` : "Verifica pagina salvata"}
         >
           <Play size={16} />
           Pagina salvata
+        </button>
+        <button
+          className="icon-button resume-position-mobile-button"
+          onClick={goToSavedPosition}
+          title={savedPageIndex !== null ? `Mergi la pagina salvata: ${savedPageIndex + 1}` : "Verifica pagina salvata"}
+        >
+          <Play size={17} />
         </button>
         <button className="secondary-button reader-analysis-control" onClick={loadSummary} disabled={busy === "summary"}>
           <Sparkles size={16} />
@@ -944,8 +1042,9 @@ function Reader({ book, vocabulary, onRefresh, onNotice, theme, onToggleTheme })
           {sentences.map((sentence, sentenceIndex) => (
             <span
               className={`sentence ${
-                book.savedPosition?.page === currentPage && sentenceIndex === 0 ? "saved-position-sentence" : ""
+                savedLocalSentenceIndex === sentenceIndex ? "saved-position-sentence" : ""
               }`}
+              ref={savedLocalSentenceIndex === sentenceIndex ? savedSentenceRef : null}
               key={`${sentenceIndex}-${sentence.slice(0, 12)}`}
             >
               {sentence.split(/(\b[A-Za-z][A-Za-z'-]*\b)/g).map((part, index) => {

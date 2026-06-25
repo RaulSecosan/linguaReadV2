@@ -27,7 +27,7 @@ await ensureDatabase();
 app.use(
   cors({
     origin(origin, callback) {
-      if (!origin || allowedOrigins.has(origin) || /^http:\/\/(localhost|127\.0\.0\.1|\[::1\]|192\.168\.\d+\.\d+):5173$/.test(origin)) {
+      if (!origin || allowedOrigins.has(origin) || /^http:\/\/(localhost|127\.0\.0\.1|\[::1\]|192\.168\.\d+\.\d+):(5173|5174|5175)$/.test(origin)) {
         return callback(null, true);
       }
       return callback(new Error(`Origin nepermis: ${origin}`));
