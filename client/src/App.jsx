@@ -1225,8 +1225,27 @@ function AiPanel({ title, items, children }) {
 function VocabularyView({ books, vocabulary, onRefresh }) {
   const [query, setQuery] = useState("");
   const [bookId, setBookId] = useState("");
+  const [learnedOverrides, setLearnedOverrides] = useState({});
+  const effectiveVocabulary = useMemo(
+    () => vocabulary.map((item) => ({
+      ...item,
+      learned: Object.prototype.hasOwnProperty.call(learnedOverrides, item.id)
+        ? learnedOverrides[item.id]
+        : item.learned,
+    })),
+    [vocabulary, learnedOverrides],
+  );
+  const bookWordCounts = useMemo(() => {
+    const counts = new Map();
+    vocabulary.forEach((item) => counts.set(item.bookId, (counts.get(item.bookId) || 0) + 1));
+    return counts;
+  }, [vocabulary]);
 
-  const filtered = vocabulary.filter((item) => {
+  useEffect(() => {
+    setLearnedOverrides({});
+  }, [vocabulary]);
+
+  const filtered = effectiveVocabulary.filter((item) => {
     const matchesBook = !bookId || item.bookId === bookId;
     const matchesQuery = !query || `${item.word} ${item.translation} ${item.bookTitle} ${item.sentence}`
       .toLowerCase()
@@ -1235,8 +1254,19 @@ function VocabularyView({ books, vocabulary, onRefresh }) {
   });
 
   const markLearned = async (item) => {
-    await api.updateVocabulary(item.id, { learned: !item.learned });
-    await onRefresh();
+    const nextLearned = !item.learned;
+    setLearnedOverrides((current) => ({ ...current, [item.id]: nextLearned }));
+    try {
+      await api.updateVocabulary(item.id, { learned: nextLearned });
+      await onRefresh();
+    } catch (error) {
+      setLearnedOverrides((current) => {
+        const next = { ...current };
+        delete next[item.id];
+        return next;
+      });
+      throw error;
+    }
   };
 
   return (
@@ -1248,7 +1278,7 @@ function VocabularyView({ books, vocabulary, onRefresh }) {
         </div>
         <div className="vocabulary-counts">
           <span><strong>{filtered.length}</strong> afisate</span>
-          <span><strong>{vocabulary.filter((item) => item.learned).length}</strong> invatate</span>
+          <span><strong>{effectiveVocabulary.filter((item) => item.learned).length}</strong> invatate</span>
         </div>
       </div>
       <div className="filters-row">
@@ -1257,10 +1287,10 @@ function VocabularyView({ books, vocabulary, onRefresh }) {
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cauta cuvant" />
         </label>
         <select value={bookId} onChange={(event) => setBookId(event.target.value)}>
-          <option value="">Toate cartile</option>
+          <option value="">Toate cartile ({vocabulary.length})</option>
           {books.map((book) => (
             <option key={book.id} value={book.id}>
-              {book.title}
+              {book.title} ({bookWordCounts.get(book.id) || 0})
             </option>
           ))}
         </select>
@@ -1284,12 +1314,18 @@ function VocabularyView({ books, vocabulary, onRefresh }) {
               <strong>{item.word}</strong>
               <span>{item.translation}</span>
               <small>{item.bookTitle || "Carte necunoscuta"}</small>
+              {item.learned && <em>Invatat</em>}
             </div>
             <div className="vocab-context">
               <p>{item.sentence}</p>
               <p className="muted">{item.sentenceRo}</p>
             </div>
-            <button className="icon-button" onClick={() => markLearned(item)} title="Marcheaza invatat">
+            <button
+              className="icon-button"
+              onClick={() => markLearned(item)}
+              title={item.learned ? "Marcheaza ca neinvatat" : "Marcheaza invatat"}
+              aria-pressed={item.learned}
+            >
               <Check size={18} />
             </button>
           </article>
@@ -1342,6 +1378,7 @@ function VocabularyLearning({ vocabulary, onRefresh }) {
   const [cardIndex, setCardIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const [learnedOverrides, setLearnedOverrides] = useState({});
+  const [completionPrompt, setCompletionPrompt] = useState(false);
   const baseGroup = groups[groupIndex] || [];
   const group = useMemo(
     () => baseGroup.map((item) => ({
@@ -1359,7 +1396,13 @@ function VocabularyLearning({ vocabulary, onRefresh }) {
   useEffect(() => {
     setCardIndex(0);
     setFlipped(false);
+    setCompletionPrompt(false);
   }, [groupIndex]);
+
+  useEffect(() => {
+    setLearnedOverrides({});
+    setCompletionPrompt(false);
+  }, [vocabulary]);
 
   if (!vocabulary.length) return <div className="empty-state">Salveaza cuvinte din reader pentru flashcards.</div>;
 
@@ -1375,15 +1418,19 @@ function VocabularyLearning({ vocabulary, onRefresh }) {
     await Promise.all(group.map((item) => api.updateVocabulary(item.id, { learned: false })));
     setCardIndex(0);
     setFlipped(false);
+    setCompletionPrompt(false);
     await onRefresh();
   };
 
-  const finishGroup = async () => {
-    if (window.confirm("Ai terminat acest grup. Vrei sa resetezi progresul si sa il repeti?")) {
-      await resetGroupProgress();
-      return;
-    }
-    if (groupIndex < groups.length - 1) {
+  const finishGroup = () => {
+    setCompletionPrompt(true);
+  };
+
+  const hasNextGroup = groupIndex < groups.length - 1;
+
+  const continueAfterGroup = () => {
+    setCompletionPrompt(false);
+    if (hasNextGroup) {
       setGroupIndex(groupIndex + 1);
       setCardIndex(0);
       setFlipped(false);
@@ -1480,8 +1527,37 @@ function VocabularyLearning({ vocabulary, onRefresh }) {
               <strong>{flipped ? card.translation : card.word}</strong>
               <p>{flipped ? card.sentenceRo : card.sentence}</p>
             </div>
-            <span className="flashcard-hint">{flipped ? "Click pentru engleza" : "Click pentru romana"}</span>
+            <div className="flashcard-cue" aria-hidden="true">
+              <RotateCcw size={16} />
+              <span />
+              <span />
+              <span />
+            </div>
           </article>
+        </div>
+      )}
+
+      {completionPrompt && (
+        <div className="learning-complete-card" role="status" aria-live="polite">
+          <div>
+            <span className="eyebrow">Grup finalizat</span>
+            <strong>{learned} din {group.length} cuvinte parcurse</strong>
+            <p>
+              {hasNextGroup
+                ? "Vrei sa treci la urmatorul grup sau sa resetezi progresul si sa repeti aceste cuvinte de la 0?"
+                : "Ai ajuns la ultimul grup. Poti pastra progresul sau il poti reseta pentru a repeta cuvintele de la 0."}
+            </p>
+          </div>
+          <div className="learning-complete-actions">
+            <button className="secondary-button" onClick={resetGroupProgress}>
+              <RotateCcw size={16} />
+              Reseteaza si repeta
+            </button>
+            <button className="primary-button" onClick={continueAfterGroup}>
+              {hasNextGroup ? <ChevronRight size={16} /> : <Check size={16} />}
+              {hasNextGroup ? "Urmatorul grup" : "Pastreaza progresul"}
+            </button>
+          </div>
         </div>
       )}
 

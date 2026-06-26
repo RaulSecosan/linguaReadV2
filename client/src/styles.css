@@ -1439,7 +1439,7 @@ h3 {
   border-radius: 8px;
   background: var(--surface);
   box-shadow: var(--shadow-sm);
-  transition: border-color 160ms ease, transform 160ms ease, box-shadow 160ms ease;
+  transition: border-color 160ms ease, transform 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
 }
 
 .vocab-audio,
@@ -1468,6 +1468,20 @@ h3 {
   font-weight: 800;
 }
 
+.vocab-word em {
+  width: fit-content;
+  margin-top: 4px;
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: var(--teal);
+  color: #fff;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .vocab-row p {
   margin: 0;
   overflow-wrap: anywhere;
@@ -1477,14 +1491,25 @@ h3 {
 }
 
 .vocab-row.learned {
-  border-color: #b9dbd3;
-  background: #f1faf7;
+  border-color: #81c5b7;
+  background: linear-gradient(135deg, #eefaf6 0%, #f8fffc 100%);
+  box-shadow: 0 10px 28px rgba(22, 122, 111, 0.11);
 }
 
-.vocab-row.learned .icon-button {
+.vocab-row.learned .vocab-word strong {
+  color: var(--teal-dark);
+}
+
+.vocab-row.learned .vocab-word span,
+.vocab-row.learned .vocab-word small {
+  color: #4f7f76;
+}
+
+.vocab-row.learned > .icon-button:last-child {
   border-color: #a5d0c6;
   background: var(--teal);
   color: #fff;
+  box-shadow: 0 8px 18px rgba(22, 122, 111, 0.24);
 }
 
 .learning-layout {
@@ -2235,6 +2260,52 @@ h3 {
 .app-shell.dark .recommendation p,
 .app-shell.dark .learning-header p {
   color: var(--muted);
+}
+
+.app-shell.dark .vocab-row.learned {
+  border-color: #397d69;
+  background: linear-gradient(135deg, #1e3832 0%, #172521 100%);
+}
+
+.app-shell.dark .vocab-row.learned .vocab-word strong {
+  color: #8dd4c9;
+}
+
+.app-shell.dark .vocab-row.learned .vocab-word span,
+.app-shell.dark .vocab-row.learned .vocab-word small {
+  color: #bdd0cb;
+}
+
+.app-shell.dark .flashcard.flipped {
+  border-color: rgba(98, 198, 177, 0.24);
+  background:
+    radial-gradient(circle at 18% 16%, rgba(98, 198, 177, 0.16), transparent 34%),
+    linear-gradient(145deg, #13211f 0%, #1b4038 54%, #0c635a 100%);
+  color: #edf7f4;
+}
+
+.app-shell.dark .flashcard.flipped::before {
+  border-color: rgba(217, 244, 237, 0.13);
+}
+
+.app-shell.dark .flashcard.flipped .flashcard-topline {
+  color: #a9d8cf;
+}
+
+.app-shell.dark .flashcard.flipped .flashcard-topline strong,
+.app-shell.dark .flashcard.flipped .flashcard-content > strong {
+  color: #d9fff7;
+}
+
+.app-shell.dark .flashcard.flipped .flashcard-content p {
+  color: #c9ddd8;
+}
+
+.app-shell.dark .flashcard.flipped .flashcard-audio,
+.app-shell.dark .flashcard.flipped .flashcard-cue {
+  border-color: rgba(217, 244, 237, 0.18);
+  background: rgba(255, 255, 255, 0.08);
+  color: #d9fff7;
 }
 
 .app-shell.dark .progress-bar {
@@ -3122,10 +3193,35 @@ h3 {
 }
 
 .flashcard.flipped {
+  border-color: rgba(22, 122, 111, 0.28);
   background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0) 40%),
-    linear-gradient(145deg, #10241f 0%, #1b4d43 54%, #0d6259 100%);
+    radial-gradient(circle at 18% 16%, rgba(255, 255, 255, 0.7), transparent 34%),
+    linear-gradient(145deg, #effbf7 0%, #d7f1ea 52%, #b8ded6 100%);
+  color: #15231f;
   animation: cardFlip 320ms ease both;
+}
+
+.flashcard.flipped::before {
+  border-color: rgba(22, 122, 111, 0.18);
+}
+
+.flashcard.flipped .flashcard-topline {
+  color: #40746a;
+}
+
+.flashcard.flipped .flashcard-topline strong,
+.flashcard.flipped .flashcard-content > strong {
+  color: var(--teal-dark);
+}
+
+.flashcard.flipped .flashcard-content p {
+  color: #425d56;
+}
+
+.flashcard.flipped .flashcard-audio {
+  border-color: rgba(22, 122, 111, 0.18);
+  background: rgba(255, 255, 255, 0.68);
+  color: var(--teal-dark);
 }
 
 .flashcard-topline {
@@ -3200,18 +3296,35 @@ h3 {
   transform: scale(1.015);
 }
 
-.flashcard-hint {
+.flashcard-cue {
   justify-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   min-height: 34px;
-  padding: 8px 12px;
+  padding: 7px 10px;
   border: 1px solid rgba(255, 255, 255, 0.22);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.08);
   color: #e6f1ee;
-  font-family: Inter, system-ui, sans-serif;
-  font-size: 11px;
-  font-weight: 800;
-  line-height: 1.2;
+}
+
+.flashcard-cue svg {
+  opacity: 0.9;
+}
+
+.flashcard-cue span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.52;
+}
+
+.flashcard.flipped .flashcard-cue {
+  border-color: rgba(22, 122, 111, 0.18);
+  background: rgba(255, 255, 255, 0.58);
+  color: var(--teal-dark);
 }
 
 .reveal-button {
@@ -3228,6 +3341,41 @@ h3 {
 
 .reveal-button:hover {
   background: rgba(255, 255, 255, 0.16);
+}
+
+.learning-complete-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid rgba(22, 122, 111, 0.2);
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 12% 0%, rgba(255, 255, 255, 0.92), transparent 30%),
+    linear-gradient(135deg, rgba(234, 250, 245, 0.98) 0%, rgba(248, 252, 250, 0.98) 100%);
+  box-shadow: 0 18px 45px rgba(22, 122, 111, 0.11);
+}
+
+.learning-complete-card strong {
+  display: block;
+  margin-top: 3px;
+  color: var(--teal-dark);
+  font-size: 18px;
+}
+
+.learning-complete-card p {
+  margin: 5px 0 0;
+  color: #4f6761;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.learning-complete-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 9px;
 }
 
 .learning-actions {
@@ -3255,6 +3403,22 @@ h3 {
 .app-shell.dark .learning-actions {
   border-color: var(--line);
   background: var(--surface);
+}
+
+.app-shell.dark .learning-complete-card {
+  border-color: rgba(98, 198, 177, 0.25);
+  background:
+    radial-gradient(circle at 12% 0%, rgba(98, 198, 177, 0.14), transparent 32%),
+    linear-gradient(135deg, rgba(20, 44, 39, 0.96) 0%, rgba(22, 32, 29, 0.96) 100%);
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.22);
+}
+
+.app-shell.dark .learning-complete-card strong {
+  color: #bdeee4;
+}
+
+.app-shell.dark .learning-complete-card p {
+  color: #bdd0cb;
 }
 
 @media (max-width: 920px) {
@@ -3512,6 +3676,10 @@ h3 {
   .vocab-row .vocab-context p {
     font-size: 12px;
     line-height: 1.45;
+  }
+
+  .vocab-row.learned {
+    border-left: 4px solid var(--teal);
   }
 
   .reader-inspector.has-selection {
