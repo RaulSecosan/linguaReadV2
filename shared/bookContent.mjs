@@ -1,5 +1,15 @@
 export function splitContent(payload, size = 180000) {
-  return Array.from({ length: Math.max(1, Math.ceil(payload.length / size)) }, (_, index) => payload.slice(index * size, (index + 1) * size));
+  if (!Number.isInteger(size) || size < 2) throw new Error("Chunk size must be at least two UTF-16 units.");
+  const chunks = [];
+  for (let offset = 0; offset < payload.length;) {
+    let end = Math.min(offset + size, payload.length);
+    const previous = payload.charCodeAt(end - 1), next = payload.charCodeAt(end);
+    // Firestore transmits each document as UTF-8; never split a surrogate pair.
+    if (previous >= 0xD800 && previous <= 0xDBFF && next >= 0xDC00 && next <= 0xDFFF) end -= 1;
+    chunks.push(payload.slice(offset, end));
+    offset = end;
+  }
+  return chunks.length ? chunks : [""];
 }
 export function joinContent(chunks) {
   const sorted = [...chunks].sort((a, b) => a.index - b.index);

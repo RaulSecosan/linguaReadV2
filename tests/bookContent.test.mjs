@@ -13,3 +13,11 @@ test('missing, duplicated or inconsistent chunks are rejected without attempting
   assert.throws(() => joinContent([{ index:0,total:2,chunk:'a' }]));
   assert.throws(() => joinContent([{ index:0,total:2,chunk:'a' },{ index:0,total:2,chunk:'a' }]));
 });
+
+test('UTF-8 transport of individual chunks preserves a character crossing the chunk boundary', () => {
+  const payload = 'a'.repeat(179999) + '🎉' + 'text';
+  const chunks = splitContent(payload);
+  const transported = chunks.map((chunk) => Buffer.from(chunk, 'utf8').toString('utf8'));
+  assert.equal(transported.join(''), payload);
+  assert.ok(chunks.every((chunk) => chunk.length <= 180000));
+});
