@@ -3973,3 +3973,5 @@ h3 {
 @media(max-width: 650px) { .reader-inspector.has-selection::before { pointer-events: none; background: transparent; } }
 
 @media (min-width: 651px) and (max-width: 920px) { .reader-toolbar { flex-wrap: wrap; } }
+
+.epub-viewport { position: relative; }

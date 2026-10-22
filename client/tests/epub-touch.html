@@ -1,0 +1,26 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:12px;font:16px system-ui}.epub-viewport{position:relative;width:350px;height:480px;overflow:hidden}.epub-container{width:350px;height:480px;overflow:hidden}iframe{border:0;width:10500px;height:480px}button{margin:4px}output{display:block;white-space:pre-wrap}</style></head><body><h1>EPUB touch regression</h1><p>Run with the client dev server at /tests/epub-touch.html. The tap must show reading with a visible marker after a missed pointer event. Scrolling must show None. No user data is read or written.</p><button id="tap">Tap after missed pointer</button><button id="scroll">Scroll without selection</button><button id="resize">Repaint after resize</button><output id="result">Loading</output><div class="epub-viewport"><div class="epub-container"><iframe sandbox="allow-same-origin"></iframe></div></div><script type="module">
+const {installWordInteractions}=await import('/src/epubInteraction.js');
+const iframe=document.querySelector('iframe'),scroller=document.querySelector('.epub-container'),result=document.querySelector('output');let interactions,wordElement,last='None';
+iframe.onload=()=>{
+ const doc=iframe.contentDocument,win=iframe.contentWindow;
+ Object.defineProperty(win,'Highlight',{value:undefined});
+ interactions=installWordInteractions({document:doc,window:win},word=>{last=word;result.textContent=word;});
+ scroller.scrollLeft=7000;
+ wordElement=[...doc.querySelectorAll('[data-word]')].find(e=>{let r=e.getBoundingClientRect(),f=iframe.getBoundingClientRect(),s=scroller.getBoundingClientRect();return r.left+f.left>s.left&&r.right+f.left<s.right});
+ result.textContent='Ready: '+wordElement.textContent;
+};
+iframe.srcdoc='<html><head><style>body{margin:0;column-width:350px;column-gap:0;width:10500px;height:460px;font:22px/1.7 Georgia}p{margin:0 15px 20px}</style></head><body>'+Array.from({length:120},(_,i)=>'<p>We enjoy <span data-word>reading</span> original books and keeping their paragraphs. This is paragraph '+i+'.</p>').join('')+'</body></html>';
+function point(){let r=wordElement.getBoundingClientRect();return {clientX:r.x+r.width/2,clientY:r.y+r.height/2,bubbles:true,pointerType:'touch'};}
+document.querySelector('#tap').onclick=()=>{
+ let win=iframe.contentWindow,p=point();wordElement.dispatchEvent(new win.PointerEvent('pointerdown',p));
+ // A pointer event can miss the text; the following native touch event must still work.
+ wordElement.dispatchEvent(new win.PointerEvent('pointerup',{...p,clientX:-1,clientY:-1}));
+ let t=new win.Touch({identifier:1,target:wordElement,clientX:p.clientX,clientY:p.clientY});
+ wordElement.dispatchEvent(new win.TouchEvent('touchend',{bubbles:true,changedTouches:[t]}));
+ result.textContent=last;
+};
+document.querySelector('#scroll').onclick=()=>{
+ interactions.syncSelection('');last='None';let win=iframe.contentWindow,p=point();wordElement.dispatchEvent(new win.PointerEvent('pointerdown',p));wordElement.dispatchEvent(new win.PointerEvent('pointermove',{...p,clientY:p.clientY+60}));wordElement.dispatchEvent(new win.PointerEvent('pointerup',p));result.textContent=last;
+};
+document.querySelector('#resize').onclick=()=>{interactions.redraw();result.textContent=last;};
+</script></body></html>

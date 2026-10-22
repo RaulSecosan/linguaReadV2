@@ -27,6 +27,8 @@ const OriginalEpubReader = forwardRef(function OriginalEpubReader({ book, vocabu
   const engine = useRef(null);
   const callbacks = useRef({ onSelectWord, onContents, onChapter, onNotice });
   callbacks.current = { onSelectWord, onContents, onChapter, onNotice };
+  const selectedRef = useRef({ word: selectedWord, cfi: null });
+  if (!selectedWord) selectedRef.current = { word: "", cfi: null };
   const words = useRef(vocabulary);
   words.current = vocabulary;
   const [status, setStatus] = useState("Se deschide EPUB-ul original...");
@@ -104,10 +106,14 @@ const OriginalEpubReader = forwardRef(function OriginalEpubReader({ book, vocabu
         const style = doc.createElement("style"); style.dataset.linguaread = "highlights";
         style.textContent = "html,body{background:transparent!important;} ::highlight(lr-vocabulary){background-color:#eed88799;color:inherit;}";
         doc.head.appendChild(style);
-        const interactions = installWordInteractions(contents, (word, sentence) => callbacks.current.onSelectWord(word, sentence, 0, `epub-${Date.now()}`));
+        const interactions = installWordInteractions(contents, (word, sentence, cfi) => {
+          selectedRef.current = { word, cfi };
+          callbacks.current.onSelectWord(word, sentence, 0, `epub-${Date.now()}`);
+        });
         contents._lrWordInteractions = interactions;
         listeners.push(() => interactions.destroy());
         markContents(contents);
+        interactions.restoreSelection(selectedRef.current.word, selectedRef.current.cfi);
       });
       refreshMarks.current = () => rendition.getContents().forEach(markContents);
       rendition.on("displayError", handleError);
@@ -126,6 +132,10 @@ const OriginalEpubReader = forwardRef(function OriginalEpubReader({ book, vocabu
         const globalPage = Math.max(1, epub.locations.locationFromCfi(next.start.cfi) + 1);
         const globalTotal = Math.max(1, epub.locations.length());
         locationRef.current = next; setLocation({ ...next, globalPage, globalTotal });
+        rendition.getContents().forEach((contents) => {
+          contents._lrWordInteractions?.restoreSelection(selectedRef.current.word, selectedRef.current.cfi);
+          contents._lrWordInteractions?.redraw();
+        });
         const section = epub.spine.get(next.start.cfi);
         const nativeText = section?.document?.querySelector("body")?.textContent || "";
         const normal = (text) => String(text || "").replace(/\s+/g, " ").trim();
