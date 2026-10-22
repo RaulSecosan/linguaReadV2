@@ -49,6 +49,8 @@ const serverApi = {
   summary: (payload) => request("/ai/summary", { method: "POST", body: JSON.stringify(payload) }),
   difficulty: (payload) => request("/ai/difficulty", { method: "POST", body: JSON.stringify(payload) }),
   quiz: (payload) => request("/ai/quiz", { method: "POST", body: JSON.stringify(payload) }),
+  journal: () => request("/ai/journal"),
+  saveJournalEntry: (date, payload) => request(`/ai/journal/${date}`, { method: "POST", body: JSON.stringify(payload) }),
   coach: () => request("/ai/coach"),
   generateCoach: (model = "gpt") => request("/ai/coach", { method: "POST", body: JSON.stringify({ model }) }),
   updateCoachTask: (date, taskId, completed) =>
@@ -68,6 +70,14 @@ async function providerApi() {
 }
 
 export const api = {
+  dashboard: async () => {
+    const provider = await providerApi();
+    if (provider.dashboard) return provider.dashboard();
+    const [books, vocabulary, stats] = await Promise.all([provider.books(), provider.vocabulary(), provider.statistics()]);
+    return { books, vocabulary, stats };
+  },
+  journal: async () => (await providerApi()).journal(),
+  saveJournalEntry: async (date, payload) => (await providerApi()).saveJournalEntry(date, payload),
   books: async () => (await providerApi()).books(),
   book: async (id) => (await providerApi()).book(id),
   uploadBook: async (formData) => (await providerApi()).uploadBook(formData),

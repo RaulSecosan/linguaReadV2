@@ -2,6 +2,8 @@ import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } f
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { api } from "./api";
 import { installWordInteractions } from "./epubInteraction";
+import { readCache, writeCache } from "./readingCache.js";
+const locationMemory = new Map();
 const normalizedWord = (word) => word.toLowerCase().replaceAll("’", "'");
 // Find an old plain-text anchor in the untouched EPUB and convert it to a native CFI.
 async function findAnchor(book, anchor) {
@@ -156,7 +158,25 @@ const OriginalEpubReader = forwardRef(function OriginalEpubReader({ book, vocabu
         }, 450);
       });
       const navigation = await epub.loaded.navigation;
-      await epub.locations.generate(1000);
+      // EPUB.js otherwise waits 100 ms between every section, on every opening.
+      // Keep the same 1000-character positions and native CFIs; cache only the index.
+      let locationsKey;
+      try {
+        const digest = await crypto.subtle.digest('SHA-256', binary);
+        locationsKey = `epub-locations:v1:${Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('')}:1000`;
+      } catch { /* Reading remains available without a local cache. */ }
+      const savedLocations = locationsKey && (locationMemory.get(locationsKey) || await readCache(locationsKey));
+      if (!active) return;
+      if (Array.isArray(savedLocations) && savedLocations.length && savedLocations.every((cfi) => typeof cfi === 'string' && cfi.startsWith('epubcfi('))) {
+        epub.locations.load(savedLocations);
+      } else {
+        epub.locations.pause = 1;
+        await epub.locations.generate(1000);
+        if (active && locationsKey) {
+          const locations = JSON.parse(epub.locations.save());
+          locationMemory.set(locationsKey, locations); void writeCache(locationsKey, locations);
+        }
+      }
       if (!active) return;
       const target = book.progress?.epubCfi || await findAnchor(epub, initialAnchor);
       setRestoreTarget(target || "");

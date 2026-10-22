@@ -1,3 +1,4 @@
+import { validateJournalDate, journalEntry } from "../../../shared/journal.mjs";
 import { setCoachTask, dayProgress, activityStreak } from "../../../shared/coachProgress.mjs";
 import { applyActivity, normalizeActivity } from "../../../shared/activity.mjs";
 import { normalizeCoach } from "../../../shared/coachPresentation.mjs";
@@ -210,6 +211,25 @@ router.post("/coach", async (request, response) => {
   } catch (error) {
     response.status(error.status || 500).json({ error: error.message || "AI Coach nu a putut genera analiza." });
   }
+});
+
+router.get("/journal", async (_request, response) => {
+  try { response.json((await readDb()).coach?.journalByDate || {}); }
+  catch { response.status(500).json({ error: "Jurnalul nu a putut fi incarcat." }); }
+});
+router.post("/journal/:date", async (request, response) => {
+  try {
+    const date = validateJournalDate(request.params.date);
+    journalEntry(request.body);
+    const day = await mutateDb((data) => {
+      data.coach ||= {}; data.coach.journalByDate ||= {};
+      const day = data.coach.journalByDate[date] ||= { date, entries: {} };
+      const entry = journalEntry(request.body, day.entries[request.body.id]);
+      day.entries[entry.id] = entry;
+      return day;
+    });
+    response.json(day);
+  } catch (error) { response.status(400).json({ error: error.message }); }
 });
 
 router.get("/coach", async (_request, response) => {

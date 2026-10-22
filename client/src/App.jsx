@@ -36,6 +36,7 @@ import { API_BASE, DATA_PROVIDER, api } from "./api";
 import { chapterTitle, paginateBook, splitSentences } from "./readingLayout";
 import { previewCoachTasks, coachDateKey } from "../../shared/coachProgress.mjs";
 import ActivityCalendar from "./ActivityCalendar";
+import DailyJournal from "./DailyJournal.jsx";
 import OriginalEpubReader from "./OriginalEpubReader";
 import { advanceReviewQueue } from "../../shared/reviewQueue.mjs";
 import { normalizeCoach } from "../../shared/coachPresentation.mjs";
@@ -111,16 +112,12 @@ function App() {
   }, []);
 
   const refresh = useCallback(async () => {
-    const [bookList, vocabList, nextStats] = await Promise.all([
-      api.books(),
-      api.vocabulary(),
-      api.statistics(),
-    ]);
+    const { books: bookList, vocabulary: vocabList, stats: nextStats } = await api.dashboard();
     setBooks(bookList);
     setVocabulary(vocabList);
     setStats(nextStats);
-    if (!currentBookId && bookList[0]) setCurrentBookId(bookList[0].id);
-  }, [currentBookId]);
+    setCurrentBookId((current) => current || bookList[0]?.id || "");
+  }, []);
 
   useEffect(() => {
     refresh()
@@ -131,7 +128,10 @@ function App() {
   useEffect(() => {
     if (!currentBookId || activeView !== "reader") return;
     setCurrentBook((loadedBook) => loadedBook?.id === currentBookId ? loadedBook : null);
-    api.book(currentBookId).then(setCurrentBook).catch((error) => setNotice(error.message));
+    let active = true;
+    api.book(currentBookId).then((book) => { if (active) setCurrentBook(book); })
+      .catch((error) => { if (active) setNotice(error.message); });
+    return () => { active = false; };
   }, [activeView, currentBookId]);
 
   const refreshBook = useCallback(async () => {
@@ -187,11 +187,7 @@ function App() {
 
   const handleDeleteBook = async (bookId, keepVocabulary) => {
     await api.deleteBook(bookId, keepVocabulary);
-    const [bookList, vocabList, nextStats] = await Promise.all([
-      api.books(),
-      api.vocabulary(),
-      api.statistics(),
-    ]);
+    const { books: bookList, vocabulary: vocabList, stats: nextStats } = await api.dashboard();
     setBooks(bookList);
     setVocabulary(vocabList);
     setStats(nextStats);
@@ -1995,6 +1991,20 @@ function CoachView({ coach: rawCoach, onRefresh, onToggleTask, stats }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [selectedDate, setSelectedDate] = useState(() => todayKey());
+  const [journal, setJournal] = useState({});
+  const [journalLoading, setJournalLoading] = useState(true);
+  const [journalError, setJournalError] = useState("");
+  const loadJournal = useCallback(async () => {
+    setJournalLoading(true); setJournalError("");
+    try { setJournal(await api.journal()); }
+    catch (error) { setJournalError(error.message); }
+    finally { setJournalLoading(false); }
+  }, []);
+  useEffect(() => { loadJournal(); }, [loadJournal]);
+  const saveJournal = async (date, entry) => {
+    const day = await api.saveJournalEntry(date, entry);
+    setJournal((current) => ({ ...current, [date]: day }));
+  };
 
 
   useEffect(() => {
@@ -2097,7 +2107,7 @@ function CoachView({ coach: rawCoach, onRefresh, onToggleTask, stats }) {
             <div className="streak-tools">
               <span className="streak-badge">{coach?.tracker?.streak || 0} zile consecutive</span>
               <ActivityCalendar selectedDate={selectedDate} onSelect={setSelectedDate}
-                activity={coach?.tracker?.activityByDate || {}} progress={coach?.tracker?.progressByDate || {}} />
+                activity={coach?.tracker?.activityByDate || {}} progress={coach?.tracker?.progressByDate || {}} journal={journal} />
             </div>
           </div>
           <div className="week-progress">
@@ -2121,6 +2131,8 @@ function CoachView({ coach: rawCoach, onRefresh, onToggleTask, stats }) {
             } />
           </div>
           <div className="coach-day-detail">
+            <DailyJournal key={selectedDate} date={selectedDate} day={journal[selectedDate]} onSave={saveJournal}
+              loading={journalLoading} loadError={journalError} onRetry={loadJournal} />
             <div className="section-heading compact">
               <div>
                 <span className="eyebrow">Jurnal zilnic</span>

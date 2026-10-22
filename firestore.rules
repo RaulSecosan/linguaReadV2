@@ -6,7 +6,7 @@ service cloud.firestore {
       allow read, write: if document == "main";
       match /{subcollection}/{subdocument} {
         allow read, write: if document == "main"
-          && subcollection in ["books", "bookContent", "vocabulary"];
+          && subcollection in ["books", "bookContent", "vocabulary", "journal"];
       }
     }
   }

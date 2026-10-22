@@ -5,7 +5,7 @@ export function hasActivity(activity = {}, progress = {}) {
     .some((key) => Number(activity[key]) > 0) || Boolean(progress.tasks?.some((task) => task.completed));
 }
 const dateKey = (year, month, day) => `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-export default function ActivityCalendar({ selectedDate, onSelect, activity, progress }) {
+export default function ActivityCalendar({ selectedDate, onSelect, activity, progress, journal = {} }) {
   const [open, setOpen] = useState(false);
   const [month, setMonth] = useState(() => new Date(`${selectedDate}T12:00:00`));
   const container = useRef(null);
@@ -37,7 +37,7 @@ export default function ActivityCalendar({ selectedDate, onSelect, activity, pro
         {Array.from({ length: start }, (_, i) => <span key={`space-${i}`} />)}
         {Array.from({ length: days }, (_, i) => {
           const date = dateKey(year, index, i + 1);
-          const active = hasActivity(activity[date], progress[date]);
+          const active = hasActivity(activity[date], progress[date]) || Boolean(Object.keys(journal[date]?.entries || {}).length);
           return <button key={date} className="calendar-day" aria-pressed={date === selectedDate}
             aria-label={`${date}${active ? ", activitate inregistrata" : ""}`}
             onClick={() => { onSelect(date); setOpen(false); toggle.current?.focus(); }}>

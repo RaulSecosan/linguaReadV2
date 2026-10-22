@@ -3988,3 +3988,22 @@ h3 {
 .pronunciation-ai-badge { position: absolute; bottom: 1px; left: 0; right: 0; font-size: 8px; line-height: 9px; font-weight: 700; text-align: center; }
 @keyframes pronunciation-pulse { from { opacity: 1; } to { opacity: .35; } }
 @media(prefers-reduced-motion: reduce) { .pronunciation-button > svg, .pronunciation-spinner { animation: none !important; } }
+
+/* Daily journal follows the existing Coach card and form styles. */
+.daily-journal { border-bottom: 1px solid var(--line); padding-bottom: 16px; margin-bottom: 20px; }
+.daily-journal h3 { margin: 4px 0; }
+.daily-journal form, .daily-journal label { display: grid; gap: 8px; }
+.daily-journal textarea { width: 100%; resize: vertical; min-height: 96px; font: inherit; line-height: 1.6; }
+.journal-actions { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; margin-top: 4px; }
+.journal-actions input { min-width: 125px; }
+.journal-entries { list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 10px; }
+.journal-entries li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: start; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.journal-entries p { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; line-height: 1.6; }
+.journal-time { font-size: .8rem; opacity: .7; padding-top: 4px; }
+.journal-save-status { color: var(--teal); min-height: 1.4em; font-size: .85rem; margin: 8px 0 0; }
+.journal-empty { opacity: .7; line-height: 1.6; }
+@media (max-width: 650px) {
+  .journal-entries li { gap: 8px; }
+  .daily-journal textarea { font-size: 16px; }
+  .journal-actions .primary-button { flex: 1; }
+}

@@ -12,7 +12,7 @@ test('a warmed Coach task click performs one transaction without scanning books 
     let root={coach:{latest:{plan:[{title:'Read',detail:'Read today',minutes:15}],focusAreas:[],recommendations:[]},dailyActivity:{'2026-10-01':{pagesRead:4}}}};
     export function doc(...args){return {path:args.filter(a=>typeof a==='string').join('/')}}
     export function collection(parent,name){return {path:parent.path+'/'+name}}
-    export const orderBy=()=>null;export const query=(ref)=>ref;
+    export const orderBy=()=>null;export const query=(ref)=>ref;export const where=()=>null;
     export async function getDoc(){__counts.getDoc++;return {exists:()=>true,data:()=>structuredClone(root)}}
     export async function getDocs(ref){__counts.getDocs++;return {docs:ref.path.endsWith('/books')?[{data:()=>({id:'b',wordCount:1000,progress:{page:2,percent:10}})}]:[]}}
     export async function runTransaction(db,callback){let pending;const value=await callback({get:async()=>{__counts.transactionReads++;return {exists:()=>true,data:()=>structuredClone(root)}},update:(ref,patch)=>{__counts.writes++;pending=patch}});if(pending)root={...root,...pending};return value}

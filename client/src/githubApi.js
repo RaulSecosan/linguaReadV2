@@ -1,3 +1,4 @@
+import { validateJournalDate, journalEntry } from "../../shared/journal.mjs";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { firestoreDb } from "./firebase";
 
@@ -432,6 +433,17 @@ export const githubApi = {
       explanation: "Raspunsul corect este extras direct din text.",
     }));
     return { questions, bookTitle: book.title, chapterTitle: chapter?.title || book.title, provider: "local" };
+  },
+  journal: async () => (await loadDb()).coach?.journalByDate || {},
+  saveJournalEntry: (date, payload) => {
+    validateJournalDate(date); journalEntry(payload);
+    return mutateDb((data) => {
+      data.coach ||= {}; data.coach.journalByDate ||= {};
+      const day = data.coach.journalByDate[date] ||= { date, entries: {} };
+      const entry = journalEntry(payload, day.entries[payload.id]);
+      day.entries[entry.id] = entry;
+      return day;
+    }, "Save daily journal entry");
   },
   coach: async () => defaultCoach(await loadDb()),
   generateCoach: async () => defaultCoach(await loadDb()),

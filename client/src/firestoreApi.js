@@ -14,9 +14,12 @@ import {
   setDoc,
   updateDoc,
   writeBatch,
+  where,
   runTransaction,
 } from "firebase/firestore";
 import { firestoreDb } from "./firebase";
+import { readCache, writeCache, singleFlight } from "./readingCache.js";
+import { validateJournalDate, journalEntry } from "../../shared/journal.mjs";
 
 const root = import.meta.env.VITE_FIRESTORE_COLLECTION || "linguaread";
 const rootDoc = import.meta.env.VITE_FIRESTORE_DOCUMENT || "main";
@@ -26,24 +29,38 @@ const booksRef = collection(rootRef, "books");
 const vocabularyRef = collection(rootRef, "vocabulary");
 const chunkSize = 180_000;
 let coachStateCache = null;
+const readOnce = singleFlight();
+const contentMemory = new Map();
+const cacheScope = `${firestoreDb.app?.options?.projectId || "firebase"}:${root}:${rootDoc}`;
+const journalRef = collection(rootRef, "journal");
 
 function newId() {
   return crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 export const firestoreApi = {
-  books: async () => {
-    await ensureRoot();
+  dashboard: async () => {
+    const state = await firestoreState();
+    return { books: state.books, vocabulary: state.vocabulary, stats: computeStatistics(state) };
+  },
+  books: () => readOnce("books", async () => {
     const snapshot = await getDocs(query(booksRef, orderBy("createdAt", "desc")));
     return snapshot.docs.map((item) => item.data());
-  },
-  book: async (id) => {
+  }),
+  book: (id) => readOnce(`book:${id}`, async () => {
     const snapshot = await getDoc(doc(booksRef, id));
     if (!snapshot.exists()) throw new Error("Cartea nu a fost gasita.");
     const book = snapshot.data();
-    const content = normalizeBookContent(await getBookContent(id));
+    const revision = `${book.createdAt || ""}:${book.updatedAt || ""}:${book.structureVersion || ""}`;
+    const key = `${cacheScope}:book:${id}:${revision}`;
+    let content = contentMemory.get(key) || await readCache(key);
+    if (!content) {
+      content = normalizeBookContent(await getBookContent(id));
+      // Do not cache an incomplete/missing archive or missing text during an import.
+      if (content.text || content.epubArchive) { contentMemory.set(key, content); void writeCache(key, content); }
+    } else contentMemory.set(key, content);
     return { ...book, ...content };
-  },
+  }),
   uploadBook: async (formData) => {
     await ensureRoot();
     const book = await buildUploadedBook(formData);
@@ -276,6 +293,24 @@ export const firestoreApi = {
     coachStateCache = { ...initial, coach: updatedCoach };
     return buildCoachDashboard(coachStateCache);
   },
+  journal: async () => {
+    const snapshot = await getDocs(journalRef);
+    return Object.fromEntries(snapshot.docs.map((item) => [item.id, item.data()]));
+  },
+  saveJournalEntry: async (date, payload) => {
+    validateJournalDate(date);
+    journalEntry(payload); // Validate before the network request.
+    const ref = doc(journalRef, date);
+    let saved;
+    await runTransaction(firestoreDb, async (transaction) => {
+      const snapshot = await transaction.get(ref);
+      const day = snapshot.data() || { date, entries: {} };
+      const entry = journalEntry(payload, day.entries?.[payload.id]);
+      saved = { ...day, date, entries: { ...day.entries, [entry.id]: entry } };
+      transaction.set(ref, saved);
+    });
+    return saved;
+  },
   recordActivity: async (type, payload = {}) => {
     await recordDailyActivity(type, payload);
     return true;
@@ -478,7 +513,7 @@ async function saveBookContent(bookId, content) {
 }
 
 async function getBookContent(bookId) {
-  const snapshot = await getDocs(collection(rootRef, "bookContent"));
+  const snapshot = await getDocs(query(collection(rootRef, "bookContent"), where("bookId", "in", [bookId, `${bookId}:epub`])));
   const chunks = snapshot.docs
     .map((item) => item.data())
     .filter((item) => item.bookId === bookId)
@@ -501,13 +536,15 @@ function normalizeBookContent(content) {
 }
 
 async function deleteContentChunks(bookId) {
-  const snapshot = await getDocs(collection(rootRef, "bookContent"));
+  const snapshot = await getDocs(query(collection(rootRef, "bookContent"), where("bookId", "in", [bookId, `${bookId}:epub`])));
   await Promise.all(snapshot.docs.filter((item) => [bookId, `${bookId}:epub`].includes(item.data().bookId)).map((item) => deleteDoc(item.ref)));
 }
 
-async function allVocabulary() {
-  const snapshot = await getDocs(vocabularyRef);
-  return snapshot.docs.map((item) => item.data()).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+function allVocabulary() {
+  return readOnce("vocabulary", async () => {
+    const snapshot = await getDocs(vocabularyRef);
+    return snapshot.docs.map((item) => item.data()).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  });
 }
 
 async function firestoreState() {
