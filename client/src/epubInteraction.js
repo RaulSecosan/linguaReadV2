@@ -1,3 +1,4 @@
+import { installTouchSurface } from './epubTouchSurface.js';
 const tokenPattern = /[A-Za-z]+(?:['’\-][A-Za-z]+)*/g;
 const blockSelector = 'p,li,blockquote,h1,h2,h3,h4,h5,h6,div';
 const normalize = (word) => String(word || '').toLowerCase().replaceAll('’', "'");
@@ -44,9 +45,11 @@ export function installWordInteractions(contents, onSelect) {
       }
     }
   }
+  let touchSurface;
   function redraw() {
     if (disposed) return;
     paint('saved', saved); paint('hover', hovered ? [hovered.range] : []); paint('selected', selected ? [selected.range] : []);
+    touchSurface?.redraw();
   }
   function blockData(node) {
     if (!node) return null;
@@ -85,6 +88,9 @@ export function installWordInteractions(contents, onSelect) {
     // actual target paragraph's rectangles, even when a caret API returned a value.
     const data = blockData(target) || blockData(doc.elementFromPoint(x, y)) || blockData(caret?.startContainer);
     if (!data) return null;
+    return wordInBlock(data, x, y, tolerance, caret);
+  }
+  function wordInBlock(data, x, y, tolerance, caret) {
     const node = data.nodes.find((item) => item.node === caret?.startContainer);
     const offset = node ? node.start + caret.startOffset : -1;
     const matches = [...data.text.matchAll(tokenPattern)];
@@ -92,7 +98,22 @@ export function installWordInteractions(contents, onSelect) {
     const candidates = [...nearCaret, ...matches.filter((match) => !nearCaret.includes(match))];
     for (const match of candidates) {
       const range = makeRange(data, match.index, match.index + match[0].length);
+      if (range?.startContainer.parentElement?.closest('a[href]')) continue;
       if (range && [...range.getClientRects()].some((rect) => x >= rect.left - tolerance && x <= rect.right + tolerance && y >= rect.top - tolerance && y <= rect.bottom + tolerance)) return result(data, match, range);
+    }
+    return null;
+  }
+  function pickFromHost(x, y) {
+    const direct = atPoint(x, y, 4);
+    if (direct) return direct;
+    // WebKit can fail iframe hit testing in distant EPUB columns. Parent taps
+    // can still be resolved against the book's text rectangles directly.
+    const blocks = doc.querySelectorAll('p,li,blockquote,h1,h2,h3,h4,h5,h6');
+    for (const block of blocks.length ? blocks : [doc.body]) {
+      if (![...block.getClientRects()].some((r) => x >= r.left - 4 && x <= r.right + 4 && y >= r.top - 4 && y <= r.bottom + 4)) continue;
+      const data = blockData(block);
+      const found = data && wordInBlock(data, x, y, 4);
+      if (found) return found;
     }
     return null;
   }
@@ -127,6 +148,13 @@ export function installWordInteractions(contents, onSelect) {
       paint('hover', hovered ? [hovered.range] : []);
     });
   }
+  function hoverFromHost(x, y) {
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(() => {
+      hovered = pickFromHost(x, y); overlay.dataset.lrHoveredWord = hovered?.word || '';
+      paint('hover', hovered ? [hovered.range] : []);
+    });
+  }
   function leave() { hovered = null; overlay.dataset.lrHoveredWord = ''; doc.body.style.cursor = originalCursor; paint('hover', []); }
   function down(event) { moved = false; pointerStart = { x: event.clientX, y: event.clientY }; }
   function up(event) {
@@ -145,6 +173,11 @@ export function installWordInteractions(contents, onSelect) {
   for (const [name, handler] of Object.entries(handlers)) doc.addEventListener(name, handler, { passive: true, capture: true });
   win.addEventListener('resize', redraw); win.addEventListener('scroll', redraw, { passive: true });
   contents.on?.('resize', redraw);
+  touchSurface = installTouchSurface(hostFrame, host, {
+    pick: pickFromHost, choose, hover: hoverFromHost, leave,
+    activateLink(x, y) { doc.elementFromPoint(x, y)?.closest('a[href]')?.click(); },
+  });
+  touchSurface.redraw();
   return {
     setSavedRanges(ranges) {
       if (win.CSS?.highlights && win.Highlight) { win.CSS.highlights.set('lr-vocabulary', new win.Highlight(...ranges)); saved = []; }
@@ -166,7 +199,7 @@ export function installWordInteractions(contents, onSelect) {
   };
   function destroy() {
     if (disposed) return;
-    frameObserver?.disconnect();
+    frameObserver?.disconnect(); touchSurface?.destroy();
     disposed = true; cancelAnimationFrame(frame); clearTimeout(selectionTimer);
     for (const [name, handler] of Object.entries(handlers)) doc.removeEventListener(name, handler, true);
     win.removeEventListener('resize', redraw); win.removeEventListener('scroll', redraw); contents.off?.('resize', redraw);
