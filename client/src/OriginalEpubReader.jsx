@@ -9,7 +9,12 @@ async function findAnchor(book, anchor) {
   for (const section of book.spine.spineItems) {
     await section.load(book.load.bind(book));
     const match = section.search(query)[0] || section.search(query.slice(0, 28))[0];
-    if (match) return match.cfi;
+    if (match) {
+      const { default: ePub } = await import("epubjs");
+      const point = new ePub.CFI(match.cfi);
+      point.collapse(true);
+      return point.toString();
+    }
   }
   return null;
 }
@@ -25,6 +30,7 @@ const OriginalEpubReader = forwardRef(function OriginalEpubReader({ book, vocabu
   words.current = vocabulary;
   const [status, setStatus] = useState("Se deschide EPUB-ul original...");
   const [location, setLocation] = useState(null);
+  const [restoreTarget, setRestoreTarget] = useState("");
   const locationRef = useRef(null);
   const [error, setError] = useState("");
   const refreshMarks = useRef(() => {});
@@ -49,7 +55,7 @@ const OriginalEpubReader = forwardRef(function OriginalEpubReader({ book, vocabu
     },
   }), [book, legacyPages]);
   useEffect(() => {
-    let active = true, epub, rendition, ready = false, userMoved = false, readingSteps = 0, resize, timer;
+    let active = true, epub, rendition, ready = false, userMoved = false, readingSteps = 0, restorationAttempts = 0, resize, timer;
     const listeners = [];
     setStatus("Se deschide EPUB-ul original..."); setError(""); setLocation(null);
     const handleError = (err) => { if (active) { setError(err.message || "EPUB-ul nu a putut fi deschis."); setStatus(""); } };
@@ -87,7 +93,12 @@ const OriginalEpubReader = forwardRef(function OriginalEpubReader({ book, vocabu
       await epub.ready;
       if (!active) { epub.destroy(); return; }
       rendition = epub.renderTo(viewport.current, { width: "100%", height: "100%", spread: "none", flow: "paginated", allowScriptedContent: false });
-      engine.current = { book: epub, rendition };
+      engine.current = { book: epub, rendition, theme, fontSize, fontFamily };
+      rendition.themes.register("lr-dark", { body: { background: "#172320 !important", color: "#e1e8e4 !important" }, "p,h1,h2,h3,h4,span,div": { color: "inherit !important" } });
+      rendition.themes.register("lr-original", {});
+      rendition.themes.select(theme === "dark" ? "lr-dark" : "lr-original");
+      if (fontSize) rendition.themes.fontSize(`${fontSize}px`);
+      if (fontFamily) rendition.themes.font(fontFamily);
       rendition.hooks.content.register((contents) => {
         if (!active) return;
         const doc = contents.document;
@@ -120,7 +131,17 @@ const OriginalEpubReader = forwardRef(function OriginalEpubReader({ book, vocabu
       refreshMarks.current = () => rendition.getContents().forEach(markContents);
       rendition.on("displayError", handleError);
       rendition.on("relocated", (next) => {
-        if (!active) return;
+        if (!active || !engine.current) return;
+        const anchor = engine.current.anchorCfi;
+        const includesAnchor = !anchor || (rendition.epubcfi.compare(next.start.cfi, anchor) <= 0 && rendition.epubcfi.compare(anchor, next.end.cfi) <= 0);
+        // Layout can temporarily report the section start while rebuilding columns.
+        // Keep the reading anchor independent of those intermediate reports.
+        if (!userMoved && !includesAnchor) {
+          if (ready && ++restorationAttempts <= 3) rendition.display(anchor).catch(handleError);
+          return;
+        }
+        restorationAttempts = 0;
+        if (userMoved || !anchor) engine.current.anchorCfi = next.start.cfi;
         locationRef.current = next; setLocation(next);
         const section = epub.spine.get(next.start.cfi);
         const nativeText = section?.document?.querySelector("body")?.textContent || "";
@@ -131,6 +152,7 @@ const OriginalEpubReader = forwardRef(function OriginalEpubReader({ book, vocabu
         engine.current.chapter = { href: next.start.href, id: legacy?.id, title: tocEntry?.title || legacy?.title || book.title };
         callbacks.current.onChapter?.(engine.current.chapter);
         if (!ready || !userMoved) return;
+        userMoved = false;
         clearTimeout(timer);
         timer = setTimeout(() => {
           const percent = Math.round(next.start.percentage * 100);
@@ -144,7 +166,21 @@ const OriginalEpubReader = forwardRef(function OriginalEpubReader({ book, vocabu
       await epub.locations.generate(1000);
       if (!active) return;
       const target = book.progress?.epubCfi || await findAnchor(epub, initialAnchor);
-      await rendition.display(target || (book.progress?.percent > 0 ? epub.locations.cfiFromPercentage(Math.min(.999, book.progress.percent / 100)) : undefined));
+      setRestoreTarget(target || "");
+      const initialPosition = target || (book.progress?.percent > 0 ? epub.locations.cfiFromPercentage(Math.min(.999, book.progress.percent / 100)) : undefined);
+      engine.current.anchorCfi = initialPosition || null;
+      // First render the section. Position ranges are reliable once its iframe and fonts have a layout.
+      const initialSection = initialPosition ? epub.spine.get(initialPosition) : null;
+      await new Promise((resolve, reject) => {
+        rendition.once("relocated", resolve);
+        rendition.display(initialSection?.href).catch(reject);
+      });
+      await Promise.all(rendition.getContents().map((contents) => contents.document.fonts?.ready));
+      if (!active) return;
+      if (initialPosition) await new Promise((resolve, reject) => {
+        rendition.once("relocated", resolve);
+        rendition.display(initialPosition).catch(reject);
+      });
       if (!active) return;
       ready = true; setStatus("");
       callbacks.current.onContents(flattenToc(navigation.toc));
@@ -157,7 +193,7 @@ const OriginalEpubReader = forwardRef(function OriginalEpubReader({ book, vocabu
         const width = viewport.current.clientWidth, height = viewport.current.clientHeight;
         if (width === lastWidth && height === lastHeight) return;
         lastWidth = width; lastHeight = height;
-        rendition.resize(width, height, locationRef.current?.start?.cfi || target);
+        rendition.resize(width, height, engine.current?.anchorCfi || locationRef.current?.start?.cfi || target);
       });
       resize.observe(viewport.current);
     })().catch(handleError);
@@ -165,14 +201,33 @@ const OriginalEpubReader = forwardRef(function OriginalEpubReader({ book, vocabu
   }, [book.id, book.epubArchive]);
   useEffect(() => { refreshMarks.current(); }, [vocabulary]);
   useEffect(() => {
-    const rendition = engine.current?.rendition;
-    if (!rendition) return;
-    if (theme === "dark") rendition.themes.register("lr-dark", { body: { background: "#172320 !important", color: "#e1e8e4 !important" }, "p,h1,h2,h3,h4,span,div": { color: "inherit !important" } });
-    else rendition.themes.register("lr-original", {});
-    rendition.themes.select(theme === "dark" ? "lr-dark" : "lr-original");
-  }, [theme, status]);
-  useEffect(() => { if (fontSize) engine.current?.rendition.themes.fontSize(`${fontSize}px`); }, [fontSize, status]);
-  useEffect(() => { if (fontFamily) engine.current?.rendition.themes.font(fontFamily); else engine.current?.rendition.themes.removeOverride("font-family"); }, [fontFamily, status]);
+    const current = engine.current;
+    if (!current || status) return;
+    const { rendition } = current;
+    const cfi = current.anchorCfi || locationRef.current?.start?.cfi;
+    let changed = false;
+    if (current.theme !== theme) {
+      current.theme = theme;
+      rendition.themes.select(theme === "dark" ? "lr-dark" : "lr-original"); changed = true;
+    }
+    if (current.fontSize !== fontSize) {
+      current.fontSize = fontSize;
+      if (fontSize) rendition.themes.fontSize(`${fontSize}px`);
+      else rendition.themes.removeOverride("font-size");
+      changed = true;
+    }
+    if (current.fontFamily !== fontFamily) {
+      current.fontFamily = fontFamily;
+      if (fontFamily) rendition.themes.font(fontFamily);
+      else rendition.themes.removeOverride("font-family");
+      changed = true;
+    }
+    // Apply initial styles before display; later user changes retain the current CFI.
+    if (changed && cfi) {
+      const frame = requestAnimationFrame(() => { if (engine.current === current) rendition.display(cfi).catch((err) => callbacks.current.onNotice(err.message)); });
+      return () => cancelAnimationFrame(frame);
+    }
+  }, [theme, fontSize, fontFamily, status]);
   const move = async (direction) => {
     if (navigating || !engine.current?.move) return;
     setNavigating(true);
@@ -183,12 +238,12 @@ const OriginalEpubReader = forwardRef(function OriginalEpubReader({ book, vocabu
     <article className="reader-page epub-reader-page" style={{ maxWidth: pageWidth, marginInline: "auto" }}>
       {status && <div role="status" className="epub-status">{status}</div>}
       {error && <div role="alert" className="quiz-error">{error} Textul si marcajele salvate sunt pastrate.</div>}
-      <div className="epub-viewport" ref={viewport} aria-label="Continut EPUB original" />
+      <div className="epub-viewport" ref={viewport} data-restore-target={restoreTarget} data-restore-anchor={initialAnchor} aria-label="Continut EPUB original" />
       {location && <div className="epub-location" data-epub-cfi={location.start.cfi}>{Math.round(location.start.percentage * 100)}% · {location.start.displayed.page} / {location.start.displayed.total} in sectiune</div>}
     </article>
     <div className="page-navigation">
-      <button className="secondary-button" disabled={!location || location.atStart || navigating} onClick={() => move("prev")}><ChevronLeft size={18} />Anterioara</button>
-      <button className="primary-button" disabled={!location || location.atEnd || navigating} onClick={() => move("next")}>Urmatoarea<ChevronRight size={18} /></button>
+      <button className="secondary-button" disabled={Boolean(status) || !location || location.atStart || navigating} onClick={() => move("prev")}><ChevronLeft size={18} />Anterioara</button>
+      <button className="primary-button" disabled={Boolean(status) || !location || location.atEnd || navigating} onClick={() => move("next")}>Urmatoarea<ChevronRight size={18} /></button>
     </div>
   </div>;
 });
