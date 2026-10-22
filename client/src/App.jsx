@@ -29,6 +29,8 @@ import {
   X,
 } from "lucide-react";
 import React from "react";
+import PronunciationButton from "./PronunciationButton.jsx";
+import { preparePronunciation } from "./pronunciation.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE, DATA_PROVIDER, api } from "./api";
 import { chapterTitle, paginateBook, splitSentences } from "./readingLayout";
@@ -82,15 +84,6 @@ const resolveSavedPageIndex = (savedPosition, pages) => {
   return Math.max(0, Math.min(Number(savedPosition.page) || 0, pages.length - 1));
 };
 
-const speak = (text, lang = "en-US") => {
-  if (!window.speechSynthesis || !text) return;
-  window.speechSynthesis.cancel();
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = lang;
-  utterance.rate = 0.92;
-  window.speechSynthesis.speak(utterance);
-};
-
 const formatReadingTime = (minutes = 0) => {
   const safeMinutes = Math.max(0, Math.round(minutes));
   if (safeMinutes < 60) return `${safeMinutes} min`;
@@ -110,6 +103,12 @@ function App() {
   const [coach, setCoach] = useState(null);
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState("");
+  useEffect(() => {
+    preparePronunciation();
+    const showSpeechError = (event) => setNotice(event.detail);
+    window.addEventListener("lr-pronunciation-error", showSpeechError);
+    return () => window.removeEventListener("lr-pronunciation-error", showSpeechError);
+  }, []);
 
   const refresh = useCallback(async () => {
     const [bookList, vocabList, nextStats] = await Promise.all([
@@ -1148,9 +1147,9 @@ function Reader({ book, vocabulary, onRefresh, onNotice, theme, onToggleTheme })
                   <span className="eyebrow">Cuvant selectat</span>
                   <h3>{selected.word}</h3>
                 </div>
-                <button className="icon-button" onClick={() => speak(selected.word)} title="Pronunta cuvant">
+                <PronunciationButton className="icon-button" text={selected.word} title="Pronunta cuvant">
                   <Volume2 size={18} />
-                </button>
+                </PronunciationButton>
                 <button className="icon-button mobile-close-word" onClick={() => setSelected(null)} title="Inchide">
                   <X size={18} />
                 </button>
@@ -1270,9 +1269,9 @@ function SentenceAudio({ label, text, lang }) {
     <div className="sentence-audio">
       <span>{label}</span>
       <p>{text}</p>
-      <button className="icon-button" onClick={() => speak(text, lang)} title="Pronunta propozitia">
+      <PronunciationButton className="icon-button" text={text} lang={lang} title="Pronunta propozitia">
         <Volume2 size={17} />
-      </button>
+      </PronunciationButton>
     </div>
   );
 }
@@ -1476,9 +1475,9 @@ function VocabularyView({ books, vocabulary, onRefresh, onNotice }) {
       <div className="vocab-table">
         {filtered.map((item) => (
           <article className={`vocab-row ${item.learned ? "learned" : ""}`} key={item.id}>
-            <button className="icon-button vocab-audio" onClick={() => speak(item.word)} title={`Pronunta ${item.word}`}>
+            <PronunciationButton className="icon-button vocab-audio" text={item.word} title={`Pronunta ${item.word}`}>
               <Volume2 size={17} />
-            </button>
+            </PronunciationButton>
             <div className="vocab-word">
               <strong>{item.word}</strong>
               <span>{item.translation}</span>
@@ -1726,16 +1725,9 @@ function VocabularyLearning({ vocabulary, onRefresh }) {
               <span>{flipped ? "Traducere" : "Flashcard"}</span>
               <strong>{cardIndex + 1} / {group.length}</strong>
             </div>
-            <button
-              className="flashcard-audio"
-              onClick={(event) => {
-                event.stopPropagation();
-                speak(card.word);
-              }}
-              title={`Pronunta ${card.word}`}
-            >
+            <PronunciationButton className="flashcard-audio" text={card.word} title={`Pronunta ${card.word}`}>
               <Volume2 size={20} />
-            </button>
+            </PronunciationButton>
             <div className="flashcard-content">
               <strong>{flipped ? card.translation : card.word}</strong>
               <p>{flipped ? card.sentenceRo : card.sentence}</p>
