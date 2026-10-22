@@ -1,3 +1,4 @@
+import { handleSpeech } from './speech.js';
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
@@ -6,6 +7,9 @@ const corsHeaders = {
 
 export default {
   async fetch(request, env) {
+    if (new URL(request.url).pathname === "/speech") {
+      try { return await handleSpeech(request, env); } catch { return json({ error: "Pronuntia audio nu este disponibila momentan." }, 502); }
+    }
     if (request.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
     if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
 

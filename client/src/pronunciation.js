@@ -1,3 +1,4 @@
+import { createRecordedPronouncer, isAppleTouchDevice } from './recordedPronunciation.js';
 export function selectVoice(voices, lang) {
   const wanted = lang.toLowerCase().replace('_', '-'), language = wanted.split('-')[0];
   return voices.filter((voice) => String(voice.lang).toLowerCase().replace('_', '-').split('-')[0] === language)
@@ -70,6 +71,13 @@ export function createPronouncer(browser, { startTimeout = 6000 } = {}) {
   }
   return { speak, stop, get activeUtterance() { return current?.utterance || null; }, destroy() { stop(); synth?.removeEventListener?.('voiceschanged', refreshVoices); } };
 }
-let pronouncer;
-export function preparePronunciation() { pronouncer ||= createPronouncer(window); return pronouncer; }
-export function pronounce(text, lang, callbacks) { return preparePronunciation().speak(text, lang, callbacks); }
+const proxyUrl = import.meta.env?.VITE_AI_PROXY_URL || '';
+let pronouncer, recordedPronouncer;
+export function usesRecordedPronunciation() { return Boolean(proxyUrl && typeof window !== 'undefined' && window.Audio && isAppleTouchDevice(window)); }
+export function preparePronunciation() {
+  if (usesRecordedPronunciation()) { recordedPronouncer ||= createRecordedPronouncer(window, proxyUrl); return recordedPronouncer; }
+  pronouncer ||= createPronouncer(window); return pronouncer;
+}
+export function pronounce(text, lang, callbacks) {
+  try { return preparePronunciation().speak(text, lang, callbacks); } catch { return Promise.reject(new Error('Pronuntia nu a putut porni. Apasa din nou pe difuzor.')); }
+}

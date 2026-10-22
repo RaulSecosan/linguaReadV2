@@ -3975,3 +3975,16 @@ h3 {
 @media (min-width: 651px) and (max-width: 920px) { .reader-toolbar { flex-wrap: wrap; } }
 
 .epub-viewport { position: relative; }
+
+/* Keep the EPUB hit plane below the fixed translation panel, independently of animations. */
+.epub-viewport { isolation: isolate; z-index: 0; }
+.pronunciation-button { position: relative; touch-action: manipulation; -webkit-tap-highlight-color: rgba(22,122,111,.28); }
+.pronunciation-button > svg, .pronunciation-button > span { pointer-events: none; }
+.pronunciation-button[data-pressed="true"], .pronunciation-button:active { transform: scale(.93); }
+.pronunciation-button[data-feedback="true"], .pronunciation-button[data-speech-state="speaking"], .pronunciation-button[data-speech-state="starting"] { color: #fff !important; background: #167a6f !important; border-color: #167a6f !important; box-shadow: 0 0 0 3px #36ad9844; }
+.pronunciation-button[data-speech-state="speaking"] > svg { animation: pronunciation-pulse .7s ease-in-out infinite alternate; }
+.pronunciation-button[data-speech-state="error"] { border-color: #b44d3e !important; color: #b44d3e !important; }
+.pronunciation-spinner { display: block; width: 17px; height: 17px; border: 2px solid #ffffff66; border-top-color: #fff; border-radius: 50%; animation: spin .7s linear infinite; }
+.pronunciation-ai-badge { position: absolute; bottom: 1px; left: 0; right: 0; font-size: 8px; line-height: 9px; font-weight: 700; text-align: center; }
+@keyframes pronunciation-pulse { from { opacity: 1; } to { opacity: .35; } }
+@media(prefers-reduced-motion: reduce) { .pronunciation-button > svg, .pronunciation-spinner { animation: none !important; } }
