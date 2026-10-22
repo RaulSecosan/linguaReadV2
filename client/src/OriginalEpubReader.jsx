@@ -1,6 +1,7 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { api } from "./api";
+import { installWordInteractions } from "./epubInteraction";
 const normalizedWord = (word) => word.toLowerCase().replaceAll("’", "'");
 // Find an old plain-text anchor in the untouched EPUB and convert it to a native CFI.
 async function findAnchor(book, anchor) {
@@ -21,7 +22,7 @@ async function findAnchor(book, anchor) {
 function flattenToc(toc) {
   return toc.flatMap((item) => [{ id: item.id || item.href, href: item.href, title: item.label.trim() }, ...flattenToc(item.subitems || [])]);
 }
-const OriginalEpubReader = forwardRef(function OriginalEpubReader({ book, vocabulary, onSelectWord, onContents, onChapter, onNotice, theme, fontSize, fontFamily, pageWidth, initialAnchor, legacyPages }, ref) {
+const OriginalEpubReader = forwardRef(function OriginalEpubReader({ book, vocabulary, selectedWord, onSelectWord, onContents, onChapter, onNotice, theme, fontSize, fontFamily, pageWidth, initialAnchor, legacyPages }, ref) {
   const viewport = useRef(null);
   const engine = useRef(null);
   const callbacks = useRef({ onSelectWord, onContents, onChapter, onNotice });
@@ -35,6 +36,14 @@ const OriginalEpubReader = forwardRef(function OriginalEpubReader({ book, vocabu
   const [error, setError] = useState("");
   const refreshMarks = useRef(() => {});
   const [navigating, setNavigating] = useState(false);
+  const [mobile, setMobile] = useState(() => window.matchMedia("(max-width: 650px)").matches);
+  const appliedFontSize = fontSize || (mobile ? 19 : null);
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 650px)");
+    const update = () => setMobile(media.matches);
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
   useImperativeHandle(ref, () => ({
     display: (target) => (engine.current?.jump?.(target) || engine.current?.rendition.display(target))?.catch((err) => callbacks.current.onNotice(err.message)),
     resume: async (position) => {
@@ -62,8 +71,6 @@ const OriginalEpubReader = forwardRef(function OriginalEpubReader({ book, vocabu
     const markContents = (contents) => {
       const doc = contents.document, win = contents.window;
       const ranges = [];
-      (contents._lrAnnotationCfis || []).forEach((cfi) => rendition.annotations.remove(cfi, "highlight"));
-      contents._lrAnnotationCfis = [];
       const wanted = new Set(words.current.map((item) => normalizedWord(item.word)));
       const walker = doc.createTreeWalker(doc.body, 4);
       let node;
@@ -74,16 +81,7 @@ const OriginalEpubReader = forwardRef(function OriginalEpubReader({ book, vocabu
           const range = doc.createRange(); range.setStart(node, match.index); range.setEnd(node, match.index + match[0].length); ranges.push(range);
         }
       }
-      // CSS highlights decorate ranges without rewriting the publisher's XHTML.
-      if (win.CSS?.highlights && win.Highlight) win.CSS.highlights.set("lr-vocabulary", new win.Highlight(...ranges));
-      else {
-        // Native CFI annotations work on browsers without the CSS Highlight API.
-        ranges.forEach((range) => {
-          const cfi = contents.cfiFromRange(range);
-          contents._lrAnnotationCfis.push(cfi);
-          rendition.annotations.highlight(cfi, {}, null, "lr-vocabulary", { fill: "#e9be57", "fill-opacity": ".28", "mix-blend-mode": "multiply" });
-        });
-      }
+      contents._lrWordInteractions?.setSavedRanges(ranges);
     };
     (async () => {
       const { default: ePub } = await import("epubjs");
@@ -93,39 +91,22 @@ const OriginalEpubReader = forwardRef(function OriginalEpubReader({ book, vocabu
       await epub.ready;
       if (!active) { epub.destroy(); return; }
       rendition = epub.renderTo(viewport.current, { width: "100%", height: "100%", spread: "none", flow: "paginated", allowScriptedContent: false });
-      engine.current = { book: epub, rendition, theme, fontSize, fontFamily };
+      engine.current = { book: epub, rendition, theme, fontSize: appliedFontSize, fontFamily };
       rendition.themes.register("lr-dark", { body: { background: "#172320 !important", color: "#e1e8e4 !important" }, "p,h1,h2,h3,h4,span,div": { color: "inherit !important" } });
       rendition.themes.register("lr-original", {});
       rendition.themes.select(theme === "dark" ? "lr-dark" : "lr-original");
-      if (fontSize) rendition.themes.fontSize(`${fontSize}px`);
+      if (appliedFontSize) rendition.themes.fontSize(`${appliedFontSize}px`);
       if (fontFamily) rendition.themes.font(fontFamily);
       rendition.hooks.content.register((contents) => {
         if (!active) return;
         const doc = contents.document;
         // Preserve original CSS, fonts and images. Only add saved-word decoration.
         const style = doc.createElement("style"); style.dataset.linguaread = "highlights";
-        style.textContent = "::highlight(lr-vocabulary){background-color:#eed88799;color:inherit;}";
+        style.textContent = "html,body{background:transparent!important;} ::highlight(lr-vocabulary){background-color:#eed88799;color:inherit;}";
         doc.head.appendChild(style);
-        const select = (event) => {
-          if (event.target.closest?.("a,button,input")) return;
-          if (contents.window.getSelection()?.toString().trim()) return;
-          let range = doc.caretRangeFromPoint?.(event.clientX, event.clientY);
-          if (!range) { const position = doc.caretPositionFromPoint?.(event.clientX, event.clientY); if (position) { range = doc.createRange(); range.setStart(position.offsetNode, position.offset); } }
-          const textNode = range?.startContainer, offset = range?.startOffset;
-          if (textNode?.nodeType !== 3) return;
-          const text = textNode.textContent;
-          const match = [...text.matchAll(/[A-Za-z]+(?:['’-][A-Za-z]+)*/g)].find((part) => offset >= part.index && offset <= part.index + part[0].length);
-          if (!match) return;
-          const paragraph = textNode.parentElement.closest("p,li,blockquote,div") || textNode.parentElement;
-          const context = paragraph.textContent;
-          const prefix = doc.createRange(); prefix.selectNodeContents(paragraph); prefix.setEnd(textNode, match.index);
-          const sentenceOffset = prefix.toString().length;
-          const sentences = [...context.matchAll(/[^.!?]+[.!?]+[”’"']?|[^.!?]+$/g)];
-          const sentence = (sentences.find((part) => sentenceOffset >= part.index && sentenceOffset < part.index + part[0].length)?.[0] || context).replace(/\s+/g, " ").trim();
-          callbacks.current.onSelectWord(match[0], sentence, 0, `epub-${Date.now()}`);
-        };
-        doc.addEventListener("click", select);
-        listeners.push(() => doc.removeEventListener("click", select));
+        const interactions = installWordInteractions(contents, (word, sentence) => callbacks.current.onSelectWord(word, sentence, 0, `epub-${Date.now()}`));
+        contents._lrWordInteractions = interactions;
+        listeners.push(() => interactions.destroy());
         markContents(contents);
       });
       refreshMarks.current = () => rendition.getContents().forEach(markContents);
@@ -142,7 +123,9 @@ const OriginalEpubReader = forwardRef(function OriginalEpubReader({ book, vocabu
         }
         restorationAttempts = 0;
         if (userMoved || !anchor) engine.current.anchorCfi = next.start.cfi;
-        locationRef.current = next; setLocation(next);
+        const globalPage = Math.max(1, epub.locations.locationFromCfi(next.start.cfi) + 1);
+        const globalTotal = Math.max(1, epub.locations.length());
+        locationRef.current = next; setLocation({ ...next, globalPage, globalTotal });
         const section = epub.spine.get(next.start.cfi);
         const nativeText = section?.document?.querySelector("body")?.textContent || "";
         const normal = (text) => String(text || "").replace(/\s+/g, " ").trim();
@@ -200,6 +183,7 @@ const OriginalEpubReader = forwardRef(function OriginalEpubReader({ book, vocabu
     return () => { active = false; ready = false; clearTimeout(timer); resize?.disconnect(); listeners.forEach((off) => off()); engine.current = null; rendition?.q.clear(); rendition?.q.stop(); rendition?.destroy(); epub?.destroy(); };
   }, [book.id, book.epubArchive]);
   useEffect(() => { refreshMarks.current(); }, [vocabulary]);
+  useEffect(() => { engine.current?.rendition.getContents().forEach((contents) => contents._lrWordInteractions?.syncSelection(selectedWord)); }, [selectedWord]);
   useEffect(() => {
     const current = engine.current;
     if (!current || status) return;
@@ -210,9 +194,9 @@ const OriginalEpubReader = forwardRef(function OriginalEpubReader({ book, vocabu
       current.theme = theme;
       rendition.themes.select(theme === "dark" ? "lr-dark" : "lr-original"); changed = true;
     }
-    if (current.fontSize !== fontSize) {
-      current.fontSize = fontSize;
-      if (fontSize) rendition.themes.fontSize(`${fontSize}px`);
+    if (current.fontSize !== appliedFontSize) {
+      current.fontSize = appliedFontSize;
+      if (appliedFontSize) rendition.themes.fontSize(`${appliedFontSize}px`);
       else rendition.themes.removeOverride("font-size");
       changed = true;
     }
@@ -227,7 +211,7 @@ const OriginalEpubReader = forwardRef(function OriginalEpubReader({ book, vocabu
       const frame = requestAnimationFrame(() => { if (engine.current === current) rendition.display(cfi).catch((err) => callbacks.current.onNotice(err.message)); });
       return () => cancelAnimationFrame(frame);
     }
-  }, [theme, fontSize, fontFamily, status]);
+  }, [theme, appliedFontSize, fontFamily, status]);
   const move = async (direction) => {
     if (navigating || !engine.current?.move) return;
     setNavigating(true);
@@ -239,7 +223,7 @@ const OriginalEpubReader = forwardRef(function OriginalEpubReader({ book, vocabu
       {status && <div role="status" className="epub-status">{status}</div>}
       {error && <div role="alert" className="quiz-error">{error} Textul si marcajele salvate sunt pastrate.</div>}
       <div className="epub-viewport" ref={viewport} data-restore-target={restoreTarget} data-restore-anchor={initialAnchor} aria-label="Continut EPUB original" />
-      {location && <div className="epub-location" data-epub-cfi={location.start.cfi}>{Math.round(location.start.percentage * 100)}% · {location.start.displayed.page} / {location.start.displayed.total} in sectiune</div>}
+      {location && <div className="epub-location" title="Pozitii EPUB globale, stabile pe intreaga carte. Numarul paginilor afisate depinde de ecran si font." data-epub-cfi={location.start.cfi}>Pozitia {location.globalPage} din {location.globalTotal} in carte · {Math.round(location.start.percentage * 100)}%</div>}
     </article>
     <div className="page-navigation">
       <button className="secondary-button" disabled={Boolean(status) || !location || location.atStart || navigating} onClick={() => move("prev")}><ChevronLeft size={18} />Anterioara</button>

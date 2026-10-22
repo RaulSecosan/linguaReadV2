@@ -1,5 +1,6 @@
+import { setCoachTask, dayProgress, activityStreak } from "../../shared/coachProgress.mjs";
 import { splitContent, joinContent } from "../../shared/bookContent.mjs";
-import { applyActivity, normalizeActivity, hasAnyActivity } from "../../shared/activity.mjs";
+import { applyActivity, normalizeActivity } from "../../shared/activity.mjs";
 import { normalizeCoach } from "../../shared/coachPresentation.mjs";
 import { extractReadingBlocks, blocksText } from "../../shared/epubStructure.mjs";
 import {
@@ -24,6 +25,7 @@ const rootRef = doc(firestoreDb, root, rootDoc);
 const booksRef = collection(rootRef, "books");
 const vocabularyRef = collection(rootRef, "vocabulary");
 const chunkSize = 180_000;
+let coachStateCache = null;
 
 function newId() {
   return crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -236,7 +238,10 @@ export const firestoreApi = {
       provider: "local",
     };
   },
-  coach: async () => buildCoachDashboard(await firestoreState()),
+  coach: async () => {
+    coachStateCache = await firestoreState();
+    return buildCoachDashboard(coachStateCache);
+  },
   generateCoach: async (model = "gpt") => {
     if (model === "ollama") throw new Error("Mistral local necesita serverul local Ollama. Pe site foloseste ChatGPT API.");
     const state = await firestoreState();
@@ -249,29 +254,27 @@ export const firestoreApi = {
       });
       const normalized = normalizeCoach(result);
       await updateDoc(rootRef, { "coach.latest": normalized });
-      return buildCoachDashboard(await firestoreState());
+      coachStateCache = await firestoreState();
+      return buildCoachDashboard(coachStateCache);
     }
     throw new Error("Serviciul AI nu este configurat.");
   },
   updateCoachTask: async (date, taskId, completed) => {
-    const initial = await firestoreState();
+    // The open dashboard already has the task template. No book/vocabulary scan on a click.
+    const initial = coachStateCache || { books: [], vocabulary: [], coach: (await getDoc(rootRef)).data()?.coach || {} };
     const todayTasks = buildCoachDashboard(initial).tracker.today;
+    let updatedCoach;
     await runTransaction(firestoreDb, async (transaction) => {
       const snapshot = await transaction.get(rootRef);
       const coach = snapshot.data()?.coach || {};
       coach.dailyProgress ||= {};
-      coach.dailyProgress[date] ||= date === dateKey() ? todayTasks : { date, tasks: [] };
-      const record = coach.dailyProgress[date];
-      const task = record.tasks.find((item) => item.id === taskId);
-      if (!task) throw new Error("Task-ul zilnic nu a fost gasit.");
-      const wasCompleted = task.completed;
-      task.completed = Boolean(completed);
-      task.completedAt = task.completed ? new Date().toISOString() : null;
-      record.updatedAt = new Date().toISOString();
-      if (task.completed && !wasCompleted) applyActivity(coach, date, "task", { taskId: task.id, taskType: task.type });
-      transaction.set(rootRef, { coach }, { merge: true });
+      coach.dailyProgress[date] ||= date === dateKey() ? { ...todayTasks, tasks: todayTasks.tasks.map((task) => ({ ...task })) } : { date, tasks: [] };
+      setCoachTask(coach, date, taskId, completed);
+      transaction.update(rootRef, { coach });
+      updatedCoach = coach;
     });
-    return buildCoachDashboard(await firestoreState());
+    coachStateCache = { ...initial, coach: updatedCoach };
+    return buildCoachDashboard(coachStateCache);
   },
   recordActivity: async (type, payload = {}) => {
     await recordDailyActivity(type, payload);
@@ -521,7 +524,7 @@ async function recordDailyActivity(type, payload = {}) {
     const snapshot = await transaction.get(rootRef);
     const coach = snapshot.data()?.coach || {};
     applyActivity(coach, dateKey(), type, payload);
-    transaction.set(rootRef, { coach }, { merge: true });
+    transaction.update(rootRef, { coach });
   });
 }
 
@@ -603,24 +606,16 @@ function buildTracker(coach = {}) {
     const date = dateKey(offsetDate(new Date(), -offset));
     const record = coach.dailyProgress?.[date];
     const activity = normalizeActivity(coach.dailyActivity?.[date]);
-    const completed = record?.tasks?.filter((task) => task.completed).length || 0;
-    const total = record?.tasks?.length || 0;
     days.push({
       date,
       label: offset === 0 ? "azi" : new Intl.DateTimeFormat("ro-RO", { weekday: "short" }).format(offsetDate(new Date(), -offset)),
       day: date.slice(-2),
-      completed,
-      total,
-      percent: total ? Math.round((completed / total) * 100) : 0,
+      ...dayProgress(record, activity),
       isToday: date === today,
       activity,
     });
   }
-  let streak = 0;
-  for (let index = days.length - 1; index >= 0; index -= 1) {
-    if (hasAnyActivity(days[index].activity)) streak += 1;
-    else break;
-  }
+  const streak = activityStreak(coach, today);
   return {
     today: coach.dailyProgress?.[today] || { date: today, tasks: [] },
     days,

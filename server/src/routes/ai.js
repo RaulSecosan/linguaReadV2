@@ -1,4 +1,5 @@
-import { applyActivity, normalizeActivity, hasAnyActivity } from "../../../shared/activity.mjs";
+import { setCoachTask, dayProgress, activityStreak } from "../../../shared/coachProgress.mjs";
+import { applyActivity, normalizeActivity } from "../../../shared/activity.mjs";
 import { normalizeCoach } from "../../../shared/coachPresentation.mjs";
 import express from "express";
 import { mutateDb, readDb } from "../services/db.js";
@@ -90,24 +91,16 @@ function coachDashboard(data) {
     day.setDate(current.getDate() - offset);
     const key = dateKey(day);
     const record = data.coach?.dailyProgress?.[key];
-    const completed = record?.tasks?.filter((task) => task.completed).length || 0;
-    const total = record?.tasks?.length || 0;
     days.push({
       date: key,
       label: new Intl.DateTimeFormat("ro-RO", { timeZone: coachTimeZone, weekday: "short" }).format(day),
       day: new Intl.DateTimeFormat("ro-RO", { timeZone: coachTimeZone, day: "2-digit" }).format(day),
-      completed,
-      total,
-      percent: total ? Math.round((completed / total) * 100) : 0,
+      ...dayProgress(record, data.coach?.dailyActivity?.[key]),
       isToday: key === today.date,
       activity: normalizeActivity(data.coach?.dailyActivity?.[key]),
     });
   }
-  let streak = 0;
-  for (let index = days.length - 1; index >= 0; index -= 1) {
-    if (hasAnyActivity(days[index].activity)) streak += 1;
-    else break;
-  }
+  const streak = activityStreak(data.coach || {}, today.date);
   return {
     ...analysis,
     tracker: {
@@ -232,11 +225,7 @@ router.patch("/coach/tasks/:date/:taskId", async (request, response) => {
     const record = data.coach?.dailyProgress?.[request.params.date];
     const task = record?.tasks?.find((item) => item.id === request.params.taskId);
     if (!task) return false;
-    const wasCompleted = task.completed;
-    task.completed = Boolean(request.body.completed);
-    if (task.completed && !wasCompleted) applyActivity(data.coach, request.params.date, "task", { taskId: task.id, taskType: task.type });
-    task.completedAt = task.completed ? new Date().toISOString() : null;
-    record.updatedAt = new Date().toISOString();
+    setCoachTask(data.coach, request.params.date, request.params.taskId, request.body.completed);
     return true;
   });
   if (!updated) return response.status(404).json({ error: "Task-ul zilnic nu a fost gasit." });

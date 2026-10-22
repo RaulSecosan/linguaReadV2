@@ -32,6 +32,7 @@ import React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE, DATA_PROVIDER, api } from "./api";
 import { chapterTitle, paginateBook, splitSentences } from "./readingLayout";
+import { previewCoachTasks, coachDateKey } from "../../shared/coachProgress.mjs";
 import ActivityCalendar from "./ActivityCalendar";
 import OriginalEpubReader from "./OriginalEpubReader";
 import { advanceReviewQueue } from "../../shared/reviewQueue.mjs";
@@ -56,7 +57,7 @@ const fontOptions = [
 const normalizeWord = (word) => word.toLowerCase().replace(/’/g, "'").replace(/^[^a-z']+|[^a-z']+$/gi, "");
 
 const normalizeAnchorText = (text = "") => text.replace(/\s+/g, " ").trim().slice(0, 220);
-const todayKey = () => new Date().toISOString().slice(0, 10);
+const todayKey = () => coachDateKey();
 
 const resolveSavedPageIndex = (savedPosition, pages) => {
   if (!savedPosition || !pages.length) return null;
@@ -671,6 +672,7 @@ function Reader({ book, vocabulary, onRefresh, onNotice, theme, onToggleTheme })
   const epubReader = useRef(null);
   const [epubContents, setEpubContents] = useState([]);
   const [epubChapter, setEpubChapter] = useState(null);
+  const [mobileContentsOpen, setMobileContentsOpen] = useState(false);
   const [epubFontSize, setEpubFontSize] = useState(null);
   const [epubFontFamily, setEpubFontFamily] = useState(null);
   const hasOriginalEpub = Boolean(book?.epubArchive);
@@ -940,7 +942,7 @@ function Reader({ book, vocabulary, onRefresh, onNotice, theme, onToggleTheme })
     setSummary(null);
   };
 
-  const changeReadingLayout = (nextFontSize, nextPageWidth) => {
+  const changeReadingLayout = (nextFontSize, nextPageWidth, updateFont = true) => {
     const nextWordsPerPage = Math.max(180, Math.round(430 * (nextPageWidth / 760) * (18 / nextFontSize)));
     const nextPagination = paginateBook(book, nextWordsPerPage);
     const nextPage = resolveSavedPageIndex({
@@ -950,7 +952,7 @@ function Reader({ book, vocabulary, onRefresh, onNotice, theme, onToggleTheme })
       anchorText: normalizeAnchorText(sentences[0] || page?.text || ""),
       page: currentPage,
     }, nextPagination.pages);
-    if (nextFontSize !== fontSize) setEpubFontSize(nextFontSize);
+    if (updateFont) setEpubFontSize(nextFontSize);
     setFontSize(nextFontSize);
     setPageWidth(nextPageWidth);
     setCurrentPage(nextPage || 0);
@@ -978,7 +980,7 @@ function Reader({ book, vocabulary, onRefresh, onNotice, theme, onToggleTheme })
         </button>
         <label className="range-label reader-setting-control">
           Aa
-          <input min="15" max="28" value={fontSize} onChange={(event) => changeReadingLayout(Number(event.target.value), pageWidth)} type="range" />
+          <input min="15" max="28" value={hasOriginalEpub ? (epubFontSize || (window.matchMedia("(max-width: 650px)").matches ? 19 : fontSize)) : fontSize} onChange={(event) => changeReadingLayout(Number(event.target.value), pageWidth)} type="range" />
         </label>
         <label className="select-label compact reader-setting-control">
           <Settings size={16} />
@@ -993,7 +995,7 @@ function Reader({ book, vocabulary, onRefresh, onNotice, theme, onToggleTheme })
         </label>
         <label className="range-label wide reader-setting-control">
           Latime
-          <input min="560" max="980" value={pageWidth} onChange={(event) => changeReadingLayout(fontSize, Number(event.target.value))} type="range" />
+          <input min="560" max="980" value={pageWidth} onChange={(event) => changeReadingLayout(fontSize, Number(event.target.value), false)} type="range" />
         </label>
         <label className="ai-model-selector reader-setting-control">
           <Sparkles size={16} />
@@ -1040,10 +1042,11 @@ function Reader({ book, vocabulary, onRefresh, onNotice, theme, onToggleTheme })
       </div>
 
       <div className="reader-layout">
-        <nav className="reader-toc" aria-label="Cuprins">
+        <nav className={`reader-toc ${mobileContentsOpen ? "contents-open" : ""}`} aria-label="Cuprins">
           <div className="toc-heading">
             <span className="eyebrow">Cuprins</span>
             <strong>{hasOriginalEpub ? epubContents.length : pagination.contents.length} capitole</strong>
+            <button className="icon-button mobile-toc-toggle" aria-label={mobileContentsOpen ? "Ascunde cuprinsul" : "Arata cuprinsul"} aria-expanded={mobileContentsOpen} aria-controls="reader-contents" onClick={() => setMobileContentsOpen(!mobileContentsOpen)}><ChevronRight size={18} /></button>
           </div>
           <div className="toc-list" id="reader-contents" ref={tocListRef}>
             {(hasOriginalEpub ? epubContents : pagination.contents).map((chapter) => (
@@ -1051,7 +1054,7 @@ function Reader({ book, vocabulary, onRefresh, onNotice, theme, onToggleTheme })
                 className={(hasOriginalEpub ? epubChapter?.href?.split("#")[0] === chapter.href?.split("#")[0] : activeChapter?.id === chapter.id) ? "active" : ""}
                 key={chapter.id}
                 ref={activeChapter?.id === chapter.id ? activeTocRef : null}
-                onClick={() => hasOriginalEpub ? epubReader.current?.display(chapter.href) : goToPage(chapter.page)}
+                onClick={() => { setMobileContentsOpen(false); hasOriginalEpub ? epubReader.current?.display(chapter.href) : goToPage(chapter.page); }}
               >
                 <span>{chapter.title}</span>
                 <small>{chapter.page != null ? chapter.page + 1 : ""}</small>
@@ -1061,7 +1064,7 @@ function Reader({ book, vocabulary, onRefresh, onNotice, theme, onToggleTheme })
         </nav>
 
         <div className="reader-stage">
-        {hasOriginalEpub ? <OriginalEpubReader ref={epubReader} book={book} vocabulary={vocabulary}
+        {hasOriginalEpub ? <OriginalEpubReader ref={epubReader} book={book} vocabulary={vocabulary} selectedWord={selected?.word || ""}
           onSelectWord={selectWord} onContents={setEpubContents} onChapter={setEpubChapter} onNotice={onNotice} theme={theme}
           fontSize={epubFontSize} fontFamily={epubFontFamily} pageWidth={pageWidth} legacyPages={pagination.pages.length}
           initialAnchor={pagination.pages[Math.max(0, Number(book.progress?.page) || 0)]?.sentences?.[0]} /> : <>
@@ -1570,6 +1573,12 @@ function VocabularyLearning({ vocabulary, onRefresh }) {
   const [reviewQueue, setReviewQueue] = useState([]);
   const [history, setHistory] = useState([]);
   const [transition, setTransition] = useState({ revision: 0, direction: "next" });
+  const [previousFlashcard, setPreviousFlashcard] = useState(null);
+  useEffect(() => {
+    if (!previousFlashcard) return;
+    const timer = setTimeout(() => setPreviousFlashcard(null), 600);
+    return () => clearTimeout(timer);
+  }, [previousFlashcard]);
   const [saving, setSaving] = useState(false);
   const [learningError, setLearningError] = useState("");
   const baseGroup = groups[groupIndex] || [];
@@ -1635,6 +1644,7 @@ function VocabularyLearning({ vocabulary, onRefresh }) {
 
   const moveCard = (later = false) => {
     if (!card) return;
+    setPreviousFlashcard({ card, flipped, direction: "next", revision: transition.revision + 1 });
     const queue = reviewQueue.length ? reviewQueue : group.filter((item) => !item.learned).map((item) => item.id);
     setHistory((previous) => [...previous, { queue: [...queue], cardIndex }]);
     const next = advanceReviewQueue(queue, card.id, later);
@@ -1662,6 +1672,7 @@ function VocabularyLearning({ vocabulary, onRefresh }) {
   const goBack = () => {
     const previous = history[history.length - 1];
     if (!previous) return;
+    setPreviousFlashcard({ card, flipped, direction: "back", revision: transition.revision + 1 });
     setReviewQueue(previous.queue);
     setCardIndex(previous.cardIndex);
     setHistory((value) => value.slice(0, -1));
@@ -1704,8 +1715,9 @@ function VocabularyLearning({ vocabulary, onRefresh }) {
             </dl>
           </aside>
 
+          <div className="flashcard-deck">
           <article
-            key={transition.revision}
+            key={`current-${transition.revision}`}
             className={`flashcard card-enter-${transition.direction} ${flipped ? "flipped" : ""}`}
           >
             <button type="button" className="flashcard-flip" onClick={() => setFlipped(!flipped)}
@@ -1735,6 +1747,11 @@ function VocabularyLearning({ vocabulary, onRefresh }) {
               <span />
             </div>
           </article>
+          {previousFlashcard && <article key={`previous-${previousFlashcard.revision}`} aria-hidden="true" className={`flashcard flashcard-out page-out-${previousFlashcard.direction} ${previousFlashcard.flipped ? "flipped" : ""}`}>
+            <div className="flashcard-topline"><span>{previousFlashcard.flipped ? "Traducere" : "Flashcard"}</span></div>
+            <div className="flashcard-content"><strong>{previousFlashcard.flipped ? previousFlashcard.card.translation : previousFlashcard.card.word}</strong><p>{previousFlashcard.flipped ? previousFlashcard.card.sentenceRo : previousFlashcard.card.sentence}</p></div>
+          </article>}
+          </div>
         </div>
       )}
 
@@ -1979,7 +1996,9 @@ function ChapterQuiz({ books, currentBookId }) {
 }
 
 function CoachView({ coach: rawCoach, onRefresh, onToggleTask, stats }) {
-  const coach = useMemo(() => normalizeCoach(rawCoach || {}), [rawCoach]);
+  const [taskOverrides, setTaskOverrides] = useState({});
+  const [pendingTask, setPendingTask] = useState("");
+  const coach = useMemo(() => previewCoachTasks(normalizeCoach(rawCoach || {}), taskOverrides), [rawCoach, taskOverrides]);
   const [model, setModel] = useState("gpt");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -2002,6 +2021,16 @@ function CoachView({ coach: rawCoach, onRefresh, onToggleTask, stats }) {
     } finally {
       setBusy(false);
     }
+  };
+
+  const toggleTask = async (task) => {
+    if (pendingTask) return;
+    const completed = !task.completed;
+    setError(""); setPendingTask(task.id);
+    setTaskOverrides((current) => ({ ...current, [task.id]: completed }));
+    try { await onToggleTask(coach.tracker.today.date, task.id, completed); }
+    catch (taskError) { setError(`Bifarea nu a fost salvata: ${taskError.message}`); }
+    finally { setTaskOverrides((current) => { const next = { ...current }; delete next[task.id]; return next; }); setPendingTask(""); }
   };
 
   const selectedActivity = coach?.tracker?.activityByDate?.[selectedDate] || {
@@ -2055,14 +2084,14 @@ function CoachView({ coach: rawCoach, onRefresh, onToggleTask, stats }) {
               <button
                 key={task.id}
                 className={task.completed ? "completed" : ""}
-                onClick={() => onToggleTask(coach.tracker.today.date, task.id, !task.completed)}
+                onClick={() => toggleTask(task)} disabled={Boolean(pendingTask)} aria-pressed={Boolean(task.completed)} aria-busy={pendingTask === task.id}
               >
                 <span className="task-check">{task.completed ? <Check size={16} /> : null}</span>
                 <span className="task-copy">
                   <strong>{task.title}</strong>
                   <small>{task.detail}</small>
                 </span>
-                <span className="task-time">{task.minutes ? `${task.minutes} min` : task.time || ""}</span>
+                <span className="task-time">{pendingTask === task.id ? "Se salveaza..." : task.minutes ? `${task.minutes} min` : task.time || ""}</span>
               </button>
             ))}
           </div>
@@ -2081,14 +2110,14 @@ function CoachView({ coach: rawCoach, onRefresh, onToggleTask, stats }) {
           </div>
           <div className="week-progress">
             {(coach?.tracker?.days || []).map((day) => (
-              <div key={day.date} className={day.isToday ? "today" : ""}>
+              <button type="button" key={day.date} className={day.isToday ? "today" : ""} aria-label={`Jurnal ${day.date}`} aria-pressed={selectedDate === day.date} onClick={() => setSelectedDate(day.date)}>
                 <span>{day.label}</span>
                 <div className="day-progress-track">
-                  <i style={{ height: `${Math.max(6, day.percent)}%` }} />
+                  <i style={{ height: `${day.percent || (day.hasActivity ? 6 : 0)}%` }} />
                 </div>
                 <strong>{day.day}</strong>
-                <small>{day.total ? `${day.completed}/${day.total}` : "—"}</small>
-              </div>
+                <small>{day.total ? `${day.completed}/${day.total}` : day.hasActivity ? "Activ" : "—"}</small>
+              </button>
             ))}
           </div>
           <div className="week-summary">
