@@ -11,3 +11,5 @@ server/uploads/*
 !server/uploads/covers
 server/uploads/covers/*
 !server/uploads/covers/.gitkeep
+
+data/linguaread-db.json

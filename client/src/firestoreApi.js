@@ -1,3 +1,5 @@
+import { splitContent, joinContent } from "../../shared/bookContent.mjs";
+import { applyActivity, normalizeActivity, hasAnyActivity } from "../../shared/activity.mjs";
 import { normalizeCoach } from "../../shared/coachPresentation.mjs";
 import { extractReadingBlocks, blocksText } from "../../shared/epubStructure.mjs";
 import {
@@ -10,6 +12,8 @@ import {
   query,
   setDoc,
   updateDoc,
+  writeBatch,
+  runTransaction,
 } from "firebase/firestore";
 import { firestoreDb } from "./firebase";
 
@@ -41,9 +45,9 @@ export const firestoreApi = {
   uploadBook: async (formData) => {
     await ensureRoot();
     const book = await buildUploadedBook(formData);
-    const { text, chapters, sourcePages, ...metadata } = book;
+    const { text, chapters, sourcePages, epubArchive, ...metadata } = book;
+    await saveBookContent(book.id, { text, chapters, sourcePages, ...(epubArchive ? { epubArchive } : {}) });
     await setDoc(doc(booksRef, book.id), metadata);
-    await saveBookContent(book.id, { text, chapters, sourcePages });
     return book;
   },
   updateBook: async (bookId, formData) => {
@@ -63,7 +67,7 @@ export const firestoreApi = {
     await deleteContentChunks(bookId);
     if (!keepVocabulary) {
       const vocab = await getDocs(vocabularyRef);
-      await Promise.all(vocab.docs.filter((item) => item.data().bookId === bookId).map((item) => deleteDoc(item.ref)));
+      await Promise.all(vocab.docs.filter((item) => [bookId, `${bookId}:epub`].includes(item.data().bookId)).map((item) => deleteDoc(item.ref)));
     }
     return true;
   },
@@ -74,8 +78,10 @@ export const firestoreApi = {
     const book = bookSnapshot.data();
     const nextPage = Math.max(0, Number(payload.page) || 0);
     const previousPage = Math.max(0, Number(book.progress?.page) || 0);
-    const deltaPages = Math.max(0, nextPage - previousPage);
+    const deltaPages = payload.readingPages != null ? Math.max(0, Math.min(20, Number(payload.readingPages) || 0)) : Math.min(1, Math.max(0, nextPage - previousPage));
     const nextProgress = {
+      ...(book.progress || {}),
+      ...(payload.epubCfi ? { epubCfi: String(payload.epubCfi) } : {}),
       percent: Number(payload.percent) || 0,
       position: Number(payload.position) || 0,
       page: nextPage,
@@ -94,6 +100,7 @@ export const firestoreApi = {
   },
   saveReadingPosition: (bookId, payload) => {
     const savedPosition = {
+      ...(payload.epubCfi ? { epubCfi: String(payload.epubCfi) } : {}),
       page: Math.max(0, Number(payload.page) || 0),
       sourcePage: payload.sourcePage ? Math.max(1, Number(payload.sourcePage) || 1) : null,
       chapterId: String(payload.chapterId || ""),
@@ -230,38 +237,41 @@ export const firestoreApi = {
     };
   },
   coach: async () => buildCoachDashboard(await firestoreState()),
-  generateCoach: async () => {
+  generateCoach: async (model = "gpt") => {
+    if (model === "ollama") throw new Error("Mistral local necesita serverul local Ollama. Pe site foloseste ChatGPT API.");
     const state = await firestoreState();
     if (aiProxyUrl) {
       const result = await aiProxyRequest("/coach", {
-        vocabulary: state.vocabulary.slice(0, 80),
-        books: state.books,
         statistics: computeStatistics(state),
+        books: state.books.map(({ title, author, progress }) => ({ title, author, progress })),
+        vocabulary: state.vocabulary.slice(0, 60).map(({ word, translation, learned }) => ({ word, translation, learned })),
+        responseFormat: { dailyTarget: "number of words", plan: [{ title: "string", detail: "string", minutes: 10 }], focusAreas: [{ title: "string", detail: "string", score: null }], recommendations: [{ title: "string", detail: "string" }] },
       });
-      state.coach.latest = result;
-      await setDoc(rootRef, { coach: state.coach }, { merge: true });
-      return buildCoachDashboard(state);
+      const normalized = normalizeCoach(result);
+      await updateDoc(rootRef, { "coach.latest": normalized });
+      return buildCoachDashboard(await firestoreState());
     }
-    return buildCoachDashboard(state);
+    throw new Error("Serviciul AI nu este configurat.");
   },
   updateCoachTask: async (date, taskId, completed) => {
-    const state = await firestoreState();
-    buildCoachDashboard(state);
-    const record = state.coach?.dailyProgress?.[date];
-    const task = record?.tasks?.find((item) => item.id === taskId);
-    if (!task) throw new Error("Task-ul zilnic nu a fost gasit.");
-    task.completed = Boolean(completed);
-    task.completedAt = task.completed ? new Date().toISOString() : null;
-    record.updatedAt = new Date().toISOString();
-    if (task.completed) {
-      applyActivity(state.coach, date, "task", {
-        taskId: task.id,
-        taskType: task.type,
-        taskTitle: task.title,
-      });
-    }
-    await setDoc(rootRef, { coach: state.coach }, { merge: true });
-    return buildCoachDashboard(state);
+    const initial = await firestoreState();
+    const todayTasks = buildCoachDashboard(initial).tracker.today;
+    await runTransaction(firestoreDb, async (transaction) => {
+      const snapshot = await transaction.get(rootRef);
+      const coach = snapshot.data()?.coach || {};
+      coach.dailyProgress ||= {};
+      coach.dailyProgress[date] ||= date === dateKey() ? todayTasks : { date, tasks: [] };
+      const record = coach.dailyProgress[date];
+      const task = record.tasks.find((item) => item.id === taskId);
+      if (!task) throw new Error("Task-ul zilnic nu a fost gasit.");
+      const wasCompleted = task.completed;
+      task.completed = Boolean(completed);
+      task.completedAt = task.completed ? new Date().toISOString() : null;
+      record.updatedAt = new Date().toISOString();
+      if (task.completed && !wasCompleted) applyActivity(coach, date, "task", { taskId: task.id, taskType: task.type });
+      transaction.set(rootRef, { coach }, { merge: true });
+    });
+    return buildCoachDashboard(await firestoreState());
   },
   recordActivity: async (type, payload = {}) => {
     await recordDailyActivity(type, payload);
@@ -288,9 +298,10 @@ async function ensureRoot() {
   if (!snapshot.exists()) await setDoc(rootRef, { coach: { dailyActivity: {}, dailyProgress: {} } }, { merge: true });
 }
 
-async function buildUploadedBook(formData) {
+export async function buildUploadedBook(formData) {
   const file = formData.get("book");
   if (!file) throw new Error("Fisierul cartii este obligatoriu.");
+  if (file.size > 50 * 1024 * 1024) throw new Error("Cartea depaseste limita de 50 MB.");
   const id = newId();
   const extracted = await extractBook(file);
   const cover = formData.get("cover");
@@ -306,6 +317,7 @@ async function buildUploadedBook(formData) {
     originalName: file.name,
     coverUrl: cover instanceof File && cover.size ? await imageToCoverDataUrl(cover) : "",
     text: extracted.text,
+    ...(fileExtension(file.name) === "epub" ? { epubArchive: await fileToBase64(file) } : {}),
     structureVersion: extracted.structureVersion || 2,
     chapters: extracted.chapters,
     sourcePages: extracted.sourcePages || [],
@@ -398,7 +410,7 @@ export async function extractEpub(file) {
     };
   });
   const text = normalizeText(chapters.map((chapter) => chapter.text).join("\n\n"));
-  if (!text) throw new Error("Nu am gasit text in EPUB.");
+  if (!opf.querySelector("spine itemref")) throw new Error("EPUB invalid: nu are pagini in spine.");
   return { text, chapters, metadata, sourcePages: [], structureVersion: 4 };
 }
 
@@ -446,16 +458,20 @@ function parseNavigationLinks(html, navDir) {
     .filter((item) => item.title && item.path);
 }
 
+async function fileToBase64(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += 32768) binary += String.fromCharCode(...bytes.subarray(index, index + 32768));
+  return btoa(binary);
+}
+
 async function saveBookContent(bookId, content) {
-  await deleteContentChunks(bookId);
   const payload = JSON.stringify(content);
-  const chunks = payload.match(new RegExp(`[\\s\\S]{1,${chunkSize}}`, "g")) || [""];
-  await Promise.all(chunks.map((chunk, index) => setDoc(doc(rootRef, "bookContent", `${bookId}-${index}`), {
-    bookId,
-    index,
-    chunk,
-    total: chunks.length,
-  })));
+  const chunks = splitContent(payload, chunkSize);
+  if (chunks.length > 490) throw new Error("Cartea este prea mare pentru stocarea disponibila.");
+  const batch = writeBatch(firestoreDb);
+  chunks.forEach((chunk, index) => batch.set(doc(rootRef, "bookContent", `${bookId}-${index}`), { bookId, index, chunk, total: chunks.length }));
+  await batch.commit();
 }
 
 async function getBookContent(bookId) {
@@ -465,7 +481,10 @@ async function getBookContent(bookId) {
     .filter((item) => item.bookId === bookId)
     .sort((a, b) => a.index - b.index);
   if (!chunks.length) return { text: "", chapters: [], sourcePages: [] };
-  return JSON.parse(chunks.map((item) => item.chunk).join(""));
+  const content = JSON.parse(joinContent(chunks));
+  const archive = snapshot.docs.map((item) => item.data()).filter((item) => item.bookId === `${bookId}:epub`).sort((a, b) => a.index - b.index);
+  if (archive.length) content.epubArchive = joinContent(archive);
+  return content;
 }
 
 function normalizeBookContent(content) {
@@ -480,7 +499,7 @@ function normalizeBookContent(content) {
 
 async function deleteContentChunks(bookId) {
   const snapshot = await getDocs(collection(rootRef, "bookContent"));
-  await Promise.all(snapshot.docs.filter((item) => item.data().bookId === bookId).map((item) => deleteDoc(item.ref)));
+  await Promise.all(snapshot.docs.filter((item) => [bookId, `${bookId}:epub`].includes(item.data().bookId)).map((item) => deleteDoc(item.ref)));
 }
 
 async function allVocabulary() {
@@ -498,11 +517,12 @@ async function firestoreState() {
 }
 
 async function recordDailyActivity(type, payload = {}) {
-  const snapshot = await getDoc(rootRef);
-  const rootData = snapshot.data() || {};
-  rootData.coach ||= {};
-  applyActivity(rootData.coach, dateKey(), type, payload);
-  await setDoc(rootRef, { coach: rootData.coach }, { merge: true });
+  await runTransaction(firestoreDb, async (transaction) => {
+    const snapshot = await transaction.get(rootRef);
+    const coach = snapshot.data()?.coach || {};
+    applyActivity(coach, dateKey(), type, payload);
+    transaction.set(rootRef, { coach }, { merge: true });
+  });
 }
 
 function filterVocabulary(rows, params = {}) {
@@ -614,72 +634,13 @@ function buildTracker(coach = {}) {
   };
 }
 
-function applyActivity(coach, date, type, payload = {}) {
-  coach.dailyActivity ||= {};
-  coach.dailyActivity[date] = normalizeActivity(coach.dailyActivity[date]);
-  const activity = coach.dailyActivity[date];
-  activity.updatedAt = new Date().toISOString();
-  if (type === "reading") {
-    activity.readingMinutes += Math.max(0, Number(payload.readingMinutes) || 0);
-    activity.pagesRead += Math.max(0, Number(payload.pagesRead) || 0);
-    if (payload.bookId) {
-      activity.books[payload.bookId] ||= { title: payload.bookTitle || "Carte", pagesRead: 0 };
-      activity.books[payload.bookId].title = payload.bookTitle || activity.books[payload.bookId].title;
-      activity.books[payload.bookId].pagesRead += Math.max(0, Number(payload.pagesRead) || 0);
-    }
-  }
-  if (type === "quiz") {
-    activity.quizzesCompleted += 1;
-    activity.quizScoreTotal += Math.max(0, Number(payload.score) || 0);
-    activity.quizQuestionTotal += Math.max(0, Number(payload.totalQuestions) || 0);
-    activity.lastQuiz = {
-      bookTitle: payload.bookTitle || "",
-      chapterTitle: payload.chapterTitle || "",
-      score: Math.max(0, Number(payload.score) || 0),
-      totalQuestions: Math.max(0, Number(payload.totalQuestions) || 0),
-    };
-  }
-  if (type === "vocabulary") {
-    activity.vocabularyPracticed += Math.max(1, Number(payload.count) || 1);
-  }
-  if (type === "task") {
-    activity.tasksCompleted += 1;
-    activity.taskTypes ||= {};
-    activity.taskTypes[payload.taskType || payload.taskId || "other"] =
-      (activity.taskTypes[payload.taskType || payload.taskId || "other"] || 0) + 1;
-  }
-}
-
-function normalizeActivity(activity) {
-  return {
-    readingMinutes: Number(activity?.readingMinutes) || 0,
-    pagesRead: Number(activity?.pagesRead) || 0,
-    quizzesCompleted: Number(activity?.quizzesCompleted) || 0,
-    quizScoreTotal: Number(activity?.quizScoreTotal) || 0,
-    quizQuestionTotal: Number(activity?.quizQuestionTotal) || 0,
-    vocabularyPracticed: Number(activity?.vocabularyPracticed) || 0,
-    tasksCompleted: Number(activity?.tasksCompleted) || 0,
-    books: activity?.books && typeof activity.books === "object" ? activity.books : {},
-    taskTypes: activity?.taskTypes && typeof activity.taskTypes === "object" ? activity.taskTypes : {},
-    lastQuiz: activity?.lastQuiz && typeof activity.lastQuiz === "object" ? activity.lastQuiz : null,
-    updatedAt: activity?.updatedAt || "",
-  };
-}
-
-function hasAnyActivity(activity) {
-  return activity.readingMinutes > 0
-    || activity.pagesRead > 0
-    || activity.quizzesCompleted > 0
-    || activity.vocabularyPracticed > 0
-    || activity.tasksCompleted > 0;
-}
-
 function estimateReadingMinutes(pagesRead) {
   return Math.max(1, Math.round(Number(pagesRead) * 1.1));
 }
 
 function dateKey(date = new Date()) {
   const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Bucharest",
     year: "numeric",
     month: "2-digit",
     day: "2-digit",

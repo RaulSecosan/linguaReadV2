@@ -1,3 +1,4 @@
+import { applyActivity, normalizeActivity, hasAnyActivity } from "../../../shared/activity.mjs";
 import { normalizeCoach } from "../../../shared/coachPresentation.mjs";
 import express from "express";
 import { mutateDb, readDb } from "../services/db.js";
@@ -99,17 +100,20 @@ function coachDashboard(data) {
       total,
       percent: total ? Math.round((completed / total) * 100) : 0,
       isToday: key === today.date,
+      activity: normalizeActivity(data.coach?.dailyActivity?.[key]),
     });
   }
   let streak = 0;
   for (let index = days.length - 1; index >= 0; index -= 1) {
-    if (days[index].total && days[index].completed === days[index].total) streak += 1;
+    if (hasAnyActivity(days[index].activity)) streak += 1;
     else break;
   }
   return {
     ...analysis,
     tracker: {
       today,
+      activityByDate: data.coach?.dailyActivity || {},
+      progressByDate: data.coach?.dailyProgress || {},
       days,
       streak,
       completedThisWeek: days.reduce((sum, day) => sum + day.completed, 0),
@@ -207,7 +211,7 @@ router.post("/coach", async (request, response) => {
     await mutateDb((nextData) => {
       nextData.coach ||= {};
       nextData.coach.latest = analysis;
-      ensureTodayTasks(nextData, analysis, true);
+      ensureTodayTasks(nextData, analysis);
     });
     response.json(coachDashboard(await readDb()));
   } catch (error) {
@@ -228,7 +232,9 @@ router.patch("/coach/tasks/:date/:taskId", async (request, response) => {
     const record = data.coach?.dailyProgress?.[request.params.date];
     const task = record?.tasks?.find((item) => item.id === request.params.taskId);
     if (!task) return false;
+    const wasCompleted = task.completed;
     task.completed = Boolean(request.body.completed);
+    if (task.completed && !wasCompleted) applyActivity(data.coach, request.params.date, "task", { taskId: task.id, taskType: task.type });
     task.completedAt = task.completed ? new Date().toISOString() : null;
     record.updatedAt = new Date().toISOString();
     return true;
@@ -237,4 +243,10 @@ router.patch("/coach/tasks/:date/:taskId", async (request, response) => {
   response.json(coachDashboard(await readDb()));
 });
 
+router.post("/activity", async (request, response) => {
+  const { type, payload = {} } = request.body;
+  if (!["reading", "vocabulary", "quiz"].includes(type)) return response.status(400).json({ error: "Tip de activitate necunoscut." });
+  await mutateDb((data) => { data.coach ||= {}; applyActivity(data.coach, dateKey(), type, payload); });
+  response.json({ ok: true });
+});
 export default router;

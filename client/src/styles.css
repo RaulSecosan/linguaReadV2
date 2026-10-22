@@ -769,7 +769,7 @@ h3 {
   position: sticky;
   top: 10px;
   z-index: 15;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   min-width: 0;
   gap: 6px;
   padding: 8px;
@@ -782,8 +782,7 @@ h3 {
 
 .reader-mobile-menu-button,
 .resume-position-mobile-button,
-.mobile-close-word,
-.contents-toggle {
+.mobile-close-word {
   display: none;
 }
 
@@ -1055,32 +1054,6 @@ h3 {
 .sentence {
   display: inline;
 }
-
-/* Preserve the book's text structure independently of sentence selection. */
-.reading-content .reading-paragraph {
-  margin: 0 0 1em;
-  line-height: inherit;
-  overflow-wrap: break-word;
-}
-
-.reading-content .reading-paragraph:last-child { margin-bottom: 0; }
-.reading-content .reading-blockquote {
-  margin-inline: 0;
-  padding-inline-start: 1.2em;
-  border-inline-start: 2px solid currentColor;
-}
-.reading-content .reading-li { padding-inline-start: 1em; }
-.reading-content .reading-hr { text-align: center; letter-spacing: .4em; margin-block: 1.8em; }
-.reading-content .reading-pre { font-family: ui-monospace, monospace; }
-.reading-content :is(.reading-h1, .reading-h2, .reading-h3, .reading-h4, .reading-h5, .reading-h6) {
-  font-family: inherit;
-  line-height: 1.35;
-  margin-block: 1.4em .75em;
-}
-.reading-content .reading-h1 { font-size: 1.65em; }
-.reading-content .reading-h2 { font-size: 1.4em; }
-.reading-content .reading-h3 { font-size: 1.2em; }
-.reading-content .word-token { font-style: inherit; font-weight: inherit; }
 
 .sentence.saved-position-sentence {
   padding: 3px 4px;
@@ -1657,20 +1630,6 @@ h3 {
   content: "";
 }
 
-.flashcard-flip {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  width: 100%;
-  height: 100%;
-  border: 0;
-  border-radius: inherit;
-  background: transparent;
-}
-.flashcard-flip:hover { background: transparent; }
-.flashcard .flashcard-audio { z-index: 2; }
-.flashcard > :not(button), .flashcard::after { pointer-events: none; }
-
 .flashcard:hover {
   box-shadow: 0 30px 70px rgba(23, 35, 32, 0.18);
   transform: translateY(-3px);
@@ -1965,21 +1924,16 @@ h3 {
   }
 
   .nav-list {
-    display: grid;
-    grid-template-columns: repeat(6, minmax(0, 1fr));
+    display: flex;
     gap: 6px;
     max-width: 100%;
     margin-top: 9px;
-    overflow: visible;
+    overflow-x: auto;
     padding-bottom: 2px;
   }
 
   .nav-item {
-    min-width: 0;
-    justify-content: center;
-    gap: 6px;
-    padding-inline: 5px;
-    font-size: 12px;
+    flex: 0 0 auto;
     min-height: 38px;
   }
 
@@ -3630,7 +3584,7 @@ h3 {
 
 @media (max-width: 920px) {
   .topbar-actions {
-    width: auto;
+    width: 100%;
   }
 
   .topbar-actions .select-label {
@@ -3945,120 +3899,32 @@ h3 {
   }
 }
 
-/* On phones, keep book text close to the top and reveal contents on demand. */
-@media (max-width: 650px) {
-  .topbar { flex-direction: row; align-items: center; }
-  .topbar-actions { flex: 0 0 auto; width: auto; }
-  .topbar-actions .theme-toggle { width: 40px; }
-  .reader-toc { height: auto; }
-  .reader-toc .toc-heading {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 4px 12px;
-  }
-  .reader-toc .toc-heading > .eyebrow,
-  .reader-toc .toc-heading > strong { grid-column: 1; }
-  .reader-toc .contents-toggle {
-    display: inline-flex;
-    grid-column: 2;
-    grid-row: 1 / span 2;
-    min-height: 40px;
-    padding: 8px 11px;
-    border: 1px solid var(--line);
-    font-size: 11px;
-  }
-  .reader-toc .toc-list { display: none; }
-  .reader-toc.contents-open .toc-list { display: block; max-height: 240px; overflow-y: auto; }
-}
-
-/* Editorial finish: shared surfaces and typography across all six views. */
-:root {
-  --ink: #233b30;
-  --muted: #6d7b6e;
-  --line: #e0e5d9;
-  --line-strong: #cdd7c8;
-  --surface: #fffefa;
-  --surface-soft: #f7f8f2;
-  --surface-muted: #edf0e6;
-  --sidebar: #193d33;
-  --sidebar-soft: #2a4c40;
-  --teal: #2c6851;
-  --teal-dark: #20543f;
-  --teal-soft: #e7efdf;
-  --shadow-sm: 0 1px 2px #1e3b2610, 0 5px 18px #1e3b2605;
-  --shadow-md: 0 9px 28px #1e3b2610;
-}
-html, .app-shell { background: #f5f5f0; }
-.sidebar { background: var(--sidebar); box-shadow: none; }
-.brand { border-color: #ffffff1c; }
-.brand-mark { background: #ffffff12; border: 1px solid #ffffff24; box-shadow: none; border-radius: 10px; }
-.brand strong { font-size: 17px; letter-spacing: -.4px; }
-.nav-item { border-radius: 10px; font-weight: 500; }
-.nav-item.active { background: #ffffff10; }
-.topbar { margin-bottom: 28px; }
-.topbar h1 { font-family: Literata, Georgia, serif; font-weight: 500; font-size: clamp(29px, 2.8vw, 39px); letter-spacing: -.8px; line-height: 1.2; }
-.topbar .eyebrow { letter-spacing: .17em; }
-.primary-button, .secondary-button, .icon-button, input, select, textarea { border-radius: 9px; }
-.primary-button { box-shadow: none; }
-:is(.metric-card, .book-card, .upload-panel, .library-toolbar, .vocab-row, .filters-row, .vocabulary-overview,
-.learning-mode-header, .learning-header, .learning-progress-panel, .learning-actions, .quiz-setup,
-.quiz-workspace, .coach-tasks, .coach-week, .recommendation, .coach-focus-grid article, .coach-plan article) { border-radius: 13px; }
-.metric-card { padding: 20px; box-shadow: none; }
-.metric-card::after { display: none; }
-.metric-card strong { font-family: Literata, Georgia, serif; font-weight: 500; font-size: clamp(24px, 2.5vw, 33px); letter-spacing: -.7px; }
-.metric-card:hover { transform: none; box-shadow: var(--shadow-sm); }
-:is(.section-heading h2, .learning-header h2, .learning-mode-header h2, .vocabulary-overview h2) {
-  font-family: Literata, Georgia, serif; font-weight: 500; line-height: 1.3; letter-spacing: -.5px;
-}
-.library-intro { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: center; gap: 20px; }
-.library-intro p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.65; }
-.library-intro .primary-button { flex-shrink: 0; }
-.library-layout.upload-closed { grid-template-columns: minmax(0, 1fr); }
-.upload-panel[hidden] { display: none; }
-.library-toolbar { box-shadow: none; padding: 18px 22px; }
-.book-card { box-shadow: var(--shadow-sm); }
-.book-card h3 { font-family: Literata, Georgia, serif; font-size: 20px; line-height: 1.35; font-weight: 500; }
-.book-card .cover { border-radius: 4px; }
-.book-card .book-facts span { background: var(--surface-muted); color: var(--muted); }
-.generated-cover { background: #264c3a; }
-.reader-toolbar { border-radius: 12px; box-shadow: var(--shadow-sm); }
-.reader-toc { border-radius: 12px; box-shadow: none; }
-.reader-page { background: #fffef8; border-color: #e7e5d7; border-radius: 6px; box-shadow: 0 8px 35px #30452a08; }
-.reader-title h2 { font-weight: 500; letter-spacing: -.6px; }
-.reader-title { border-bottom-color: #e7e5d7; }
-.reading-content .word-token { padding-inline: 1px; }
-.vocab-row { box-shadow: none; }
-.vocab-word > strong { font-family: Literata, Georgia, serif; font-weight: 500; }
-.flashcard { border-radius: 14px; box-shadow: var(--shadow-md); }
-.flashcard::after { opacity: .4; }
-.coach-hero { background: #204c3c; border-radius: 14px; box-shadow: none; }
-.coach-hero h2 { font-family: Literata, Georgia, serif; font-weight: 500; line-height: 1.35; }
-.coach-tasks, .coach-week { box-shadow: none; }
-.app-shell.dark { --surface: #1c2b24; --surface-soft: #23332a; --surface-muted: #2a3b2e; --line: #34463a; --muted: #a5b6a4; --ink: #edf0e4; background: #111e18; }
-.app-shell.dark .main-content { background: #111e18; }
-.app-shell.dark .sidebar { background: #142f25; }
-.app-shell.dark .reader-page { background: #1d2c23; border-color: #354638; color: #e5e9dd; }
-.app-shell.dark .metric-card strong { color: #e5e9dd; }
-.app-shell.dark .book-card h3 { color: #e5e9dd; }
-.app-shell.dark .coach-hero { background: #1b4030; }
-@media (max-width: 650px) {
-  .topbar { margin-bottom: 18px; }
-  .topbar h1 { font-size: 29px; }
-  .library-intro { flex-direction: column; align-items: stretch; gap: 12px; }
-  .library-intro p { font-size: 12px; }
-  .metric-card { padding: 17px; }
-  .reader-toolbar { border-radius: 11px; }
-  .reader-page { padding: 25px 21px; }
-  .section-heading h2 { font-size: 22px; }
-  .book-card h3 { font-size: 18px; }
-}
-
-.library-books .book-grid {
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
-}
-.app-shell.dark :is(.segmented-control, .learning-tabs) button.active {
-  background: #365343;
-  color: #f1f4e7;
-  box-shadow: none;
-}
+/* Requested reading and learning behavior, keeping the existing visual design. */
+.reading-paragraph { margin: 0 0 .85em; }
+.reading-paragraph .sentence { display: inline; }
+.reading-blockquote { margin-left: 1.5em; }
+.flashcard { position: relative; }
+.flashcard-flip { position: absolute; inset: 0; z-index: 1; border: 0; background: transparent; cursor: pointer; border-radius: inherit; }
+.flashcard-audio { z-index: 2; }
+.flashcard-flip:focus-visible { outline: 3px solid var(--teal); }
+.card-enter-next { animation: card-next .26s ease-out; }
+.card-enter-back { animation: card-back .26s ease-out; }
+@keyframes card-next { from { opacity: .25; transform: translateX(28px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes card-back { from { opacity: .25; transform: translateX(-28px); } to { opacity: 1; transform: translateX(0); } }
+@media(prefers-reduced-motion: reduce) { .card-enter-next, .card-enter-back { animation: none; } }
+@media(max-width: 650px) { .vocab-row > .vocab-row-actions { grid-column: 1 / -1; display: flex; flex-direction: row; justify-content: flex-end; gap: 10px; } }
+.activity-calendar { position: relative; }
+.calendar-popover { position: absolute; z-index: 30; right: 0; top: calc(100% + 8px); width: 280px; padding: 14px; background: var(--surface, #fff); color: var(--ink); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 8px 30px #0002; }
+.calendar-heading { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); text-align: center; gap: 2px; }
+.calendar-grid small { padding: 5px 0; color: var(--muted); }
+.calendar-day { position: relative; min-height: 36px; padding: 5px 0 9px; border: 0; border-radius: 6px; background: transparent; color: inherit; cursor: pointer; }
+.calendar-day:hover, .calendar-day[aria-pressed="true"] { background: var(--teal-soft, #deece7); color: var(--teal, #147d73); }
+.calendar-dot { position: absolute; width: 4px; height: 4px; background: var(--teal, #147d73); border-radius: 50%; bottom: 3px; left: calc(50% - 2px); }
+.original-epub { width: 100%; min-width: 0; position: relative; }
+.epub-viewport { width: 100%; height: 70vh; min-height: 420px; max-height: 1000px; overflow: hidden; }
+.epub-viewport iframe { border: 0; }
+.epub-status { padding: 12px; color: var(--muted); }
+.epub-reader-page { padding: 18px; }
+.epub-location { color: var(--muted); text-align: center; margin: 10px 0; }
+@media(max-width: 650px) { .epub-reader-page { padding: 8px; } .epub-viewport { height: 65vh; min-height: 360px; } .reader-stage { min-width: 0; } }

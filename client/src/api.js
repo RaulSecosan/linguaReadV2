@@ -24,6 +24,7 @@ async function request(path, options = {}) {
 }
 
 const serverApi = {
+  recordActivity: (type, payload) => request("/ai/activity", { method: "POST", body: JSON.stringify({ type, payload }) }),
   books: () => request("/books"),
   book: (id) => request(`/books/${id}`),
   uploadBook: (formData) => request("/books", { method: "POST", body: formData }),

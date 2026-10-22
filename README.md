@@ -71,3 +71,13 @@ VITE_AI_PROXY_URL=https://linguaread-ai.secoraul8-linguaread.workers.dev
 ```
 
 Cheia OpenAI ramane in Cloudflare Worker secrets si nu ajunge in browser.
+
+### Original EPUB reader
+
+EPUB imports retain the original archive in chunked `bookContent`, alongside the existing plain text used for AI analysis. The reader uses epub.js to render the publisher's XHTML, CSS, fonts and images, with scripts disabled. Saved vocabulary is decorated with DOM ranges without rewriting the source paragraphs. Native CFI positions are saved in addition to the legacy position fields. Existing books without their archive continue to use the text reader; an original archive can be attached separately under `<bookId>:epub` without replacing any existing content or metadata.
+
+Layout adapts to the screen, so reflowable EPUB page breaks depend on viewport and font settings. DRM-encrypted, malformed, scripted or unsupported interactive publications cannot be guaranteed to reproduce completely. The archive itself remains unchanged.
+
+Learning defers a word after up to three other cards and keeps a back history. Finished groups show the next-group action. The activity calendar displays dots for recorded reading, practice, quizzes and completed tasks. AI Coach writes and activity increments use Firestore transactions or field updates to preserve concurrent history.
+
+Run `npm test` and `npm --prefix client run build` with Node 22.13+. Production uses the existing Firebase project; deploy hosting with `firebase deploy --only hosting --project lingua-59cff`. Database exports, original books and secret environment files must not be committed to the public Git repository.

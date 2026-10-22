@@ -70,6 +70,10 @@ router.get("/:id", async (request, response) => {
     data = await readDb();
     book = data.books.find((item) => item.id === request.params.id);
   }
+  if (book.fileType === "epub" && book.storedPath) {
+    const epubArchive = await fs.readFile(book.storedPath).then((bytes) => bytes.toString("base64")).catch(() => null);
+    if (epubArchive) return response.json({ ...book, epubArchive });
+  }
   response.json(book);
 });
 
@@ -81,7 +85,7 @@ router.post("/", upload.fields([{ name: "book", maxCount: 1 }, { name: "cover", 
     const fileType = path.extname(bookFile.originalname).replace(".", "").toLowerCase();
     const extracted = await extractBook(bookFile.path, bookFile.originalname);
     const { text } = extracted;
-    if (!text) throw Object.assign(new Error("Nu am gasit text in fisier."), { status: 400 });
+    if (!text && fileType !== "epub") throw Object.assign(new Error("Nu am gasit text in fisier."), { status: 400 });
 
     const coverFile = request.files?.cover?.[0];
     const analysis = analyzeText(text);
@@ -169,6 +173,8 @@ router.patch("/:id/progress", async (request, response) => {
     const book = data.books.find((item) => item.id === request.params.id);
     if (!book) return null;
     book.progress = {
+      ...(book.progress || {}),
+      ...(request.body.epubCfi ? { epubCfi: String(request.body.epubCfi) } : {}),
       percent: Number(request.body.percent) || 0,
       position: Number(request.body.position) || 0,
       page: Math.max(0, Number(request.body.page) || 0),
@@ -186,6 +192,7 @@ router.patch("/:id/saved-position", async (request, response) => {
     const book = data.books.find((item) => item.id === request.params.id);
     if (!book) return null;
     book.savedPosition = {
+      ...(request.body.epubCfi ? { epubCfi: String(request.body.epubCfi) } : {}),
       page: Math.max(0, Number(request.body.page) || 0),
       sourcePage: request.body.sourcePage ? Math.max(1, Number(request.body.sourcePage) || 1) : null,
       chapterId: String(request.body.chapterId || ""),

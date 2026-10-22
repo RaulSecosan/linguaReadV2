@@ -1,7 +1,7 @@
 // Older Worker responses used strings and {activity,time}; adapt them on read.
 // Nothing here migrates, overwrites, or discards the saved response.
 export function normalizeCoach(input = {}) {
-  const plan = (input.plan || []).map((item, index) => {
+  const plan = (Array.isArray(input.plan) ? input.plan : []).map((item, index) => {
     const value = typeof item === "string" ? { activity: item } : item || {};
     return {
       ...value,
@@ -19,7 +19,7 @@ export function normalizeCoach(input = {}) {
     ...input, plan,
     dailyTarget: Number.isFinite(target) && target > 0 ? target : inferred ? Number(inferred[1]) : 10,
     dailyTargetDescription: typeof input.dailyTarget === "string" && !Number.isFinite(target) ? input.dailyTarget : "",
-    focusAreas: (input.focusAreas || []).map(normalizeCard),
-    recommendations: (input.recommendations || []).map(normalizeCard),
+    focusAreas: (Array.isArray(input.focusAreas) ? input.focusAreas : []).map(normalizeCard),
+    recommendations: (Array.isArray(input.recommendations) ? input.recommendations : []).map(normalizeCard),
   };
 }

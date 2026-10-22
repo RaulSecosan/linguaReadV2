@@ -32,6 +32,9 @@ import React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE, DATA_PROVIDER, api } from "./api";
 import { chapterTitle, paginateBook, splitSentences } from "./readingLayout";
+import ActivityCalendar from "./ActivityCalendar";
+import OriginalEpubReader from "./OriginalEpubReader";
+import { advanceReviewQueue } from "../../shared/reviewQueue.mjs";
 import { normalizeCoach } from "../../shared/coachPresentation.mjs";
 
 const navigation = [
@@ -382,7 +385,6 @@ function LibraryView({ books, onUpload, onOpenBook, onUpdateBook, onDeleteBook, 
   const [coverFile, setCoverFile] = useState(null);
   const [busy, setBusy] = useState(false);
   const [editingBook, setEditingBook] = useState(null);
-  const [showUpload, setShowUpload] = useState(books.length === 0);
   const [viewMode, setViewMode] = useState(() => localStorage.getItem("lr-library-view") || "grid");
 
   const submit = async (event) => {
@@ -410,16 +412,8 @@ function LibraryView({ books, onUpload, onOpenBook, onUpdateBook, onDeleteBook, 
   };
 
   return (
-    <section className={`library-layout ${showUpload ? "upload-open" : "upload-closed"}`}>
-      <div className="library-intro">
-        <p>Povești de descoperit. Cuvinte care rămân cu tine.</p>
-        <button className="primary-button" type="button" aria-expanded={showUpload} aria-controls="book-upload-form"
-          onClick={() => setShowUpload((value) => !value)}>
-          {showUpload ? <X size={17} /> : <Plus size={17} />}
-          {showUpload ? "Inchide formularul" : "Importa o carte"}
-        </button>
-      </div>
-      <form className="upload-panel" id="book-upload-form" hidden={!showUpload} onSubmit={submit}>
+    <section className="library-layout">
+      <form className="upload-panel" onSubmit={submit}>
         <div className="section-heading">
           <div>
             <span className="eyebrow">Upload</span>
@@ -671,10 +665,15 @@ function Reader({ book, vocabulary, onRefresh, onNotice, theme, onToggleTheme })
   const [busy, setBusy] = useState("");
   const [currentPage, setCurrentPage] = useState(0);
   const [showReaderSettings, setShowReaderSettings] = useState(false);
-  const [showContents, setShowContents] = useState(false);
   const [editingSelectedVocabulary, setEditingSelectedVocabulary] = useState(false);
   const [selectedEditDraft, setSelectedEditDraft] = useState({});
   const [savingSelectedEdit, setSavingSelectedEdit] = useState(false);
+  const epubReader = useRef(null);
+  const [epubContents, setEpubContents] = useState([]);
+  const [epubChapter, setEpubChapter] = useState(null);
+  const [epubFontSize, setEpubFontSize] = useState(null);
+  const [epubFontFamily, setEpubFontFamily] = useState(null);
+  const hasOriginalEpub = Boolean(book?.epubArchive);
   const tocListRef = useRef(null);
   const activeTocRef = useRef(null);
   const savedSentenceRef = useRef(null);
@@ -807,6 +806,11 @@ function Reader({ book, vocabulary, onRefresh, onNotice, theme, onToggleTheme })
   if (!book) return <div className="empty-state">Alege sau incarca o carte.</div>;
 
   const saveReadingPosition = async () => {
+    if (hasOriginalEpub) {
+      try { await epubReader.current?.save(); await onRefresh(); onNotice("Pozitia din EPUB a fost salvata."); }
+      catch (error) { onNotice(error.message); }
+      return;
+    }
     const anchorText = normalizeAnchorText(sentences[0] || page?.text || "");
     await api.saveReadingPosition(book.id, {
       page: currentPage,
@@ -878,10 +882,11 @@ function Reader({ book, vocabulary, onRefresh, onNotice, theme, onToggleTheme })
   };
 
   const loadSummary = async () => {
+    if (hasOriginalEpub && !epubChapter?.id) { onNotice("Aceasta sectiune EPUB nu contine un capitol de text pentru rezumat."); return; }
     setBusy("summary");
     setSummary(null);
     api
-      .summary({ bookId: book.id, chapterId: activeChapter?.id, model })
+      .summary({ bookId: book.id, chapterId: hasOriginalEpub ? epubChapter?.id : activeChapter?.id, model })
       .then(setSummary)
       .catch((error) => onNotice(error.message))
       .finally(() => setBusy(""));
@@ -904,11 +909,15 @@ function Reader({ book, vocabulary, onRefresh, onNotice, theme, onToggleTheme })
     setTranslationError("");
     setSummary(null);
     setShowReaderSettings(false);
-    setShowContents(false);
     saveProgress(safePage);
   };
 
   const goToSavedPosition = async () => {
+    if (hasOriginalEpub) {
+      try { const latestBook = await api.book(book.id); await epubReader.current?.resume(latestBook.savedPosition); }
+      catch (error) { onNotice(error.message); }
+      return;
+    }
     try {
       const latestBook = await api.book(book.id);
       const latestPagination = paginateBook(latestBook, wordsPerPage);
@@ -941,6 +950,7 @@ function Reader({ book, vocabulary, onRefresh, onNotice, theme, onToggleTheme })
       anchorText: normalizeAnchorText(sentences[0] || page?.text || ""),
       page: currentPage,
     }, nextPagination.pages);
+    if (nextFontSize !== fontSize) setEpubFontSize(nextFontSize);
     setFontSize(nextFontSize);
     setPageWidth(nextPageWidth);
     setCurrentPage(nextPage || 0);
@@ -972,7 +982,8 @@ function Reader({ book, vocabulary, onRefresh, onNotice, theme, onToggleTheme })
         </label>
         <label className="select-label compact reader-setting-control">
           <Settings size={16} />
-          <select aria-label="Fontul textului" value={fontFamily} onChange={(event) => setFontFamily(event.target.value)}>
+          <select aria-label="Fontul textului" value={hasOriginalEpub ? (epubFontFamily || "") : fontFamily} onChange={(event) => { setFontFamily(event.target.value); setEpubFontFamily(event.target.value); }}>
+            {hasOriginalEpub && <option value="">Original EPUB</option>}
             {fontOptions.map((font) => (
               <option value={font.value} key={font.value}>
                 {font.label}
@@ -1029,29 +1040,31 @@ function Reader({ book, vocabulary, onRefresh, onNotice, theme, onToggleTheme })
       </div>
 
       <div className="reader-layout">
-        <nav className={`reader-toc ${showContents ? "contents-open" : ""}`} aria-label="Cuprins">
+        <nav className="reader-toc" aria-label="Cuprins">
           <div className="toc-heading">
             <span className="eyebrow">Cuprins</span>
-            <strong>{pagination.contents.length} capitole</strong>
-            <button className="secondary-button contents-toggle" aria-expanded={showContents} aria-controls="reader-contents"
-              onClick={() => setShowContents((value) => !value)}>{showContents ? "Ascunde cuprinsul" : "Arata cuprinsul"}</button>
+            <strong>{hasOriginalEpub ? epubContents.length : pagination.contents.length} capitole</strong>
           </div>
           <div className="toc-list" id="reader-contents" ref={tocListRef}>
-            {pagination.contents.map((chapter) => (
+            {(hasOriginalEpub ? epubContents : pagination.contents).map((chapter) => (
               <button
-                className={activeChapter?.id === chapter.id ? "active" : ""}
+                className={(hasOriginalEpub ? epubChapter?.href?.split("#")[0] === chapter.href?.split("#")[0] : activeChapter?.id === chapter.id) ? "active" : ""}
                 key={chapter.id}
                 ref={activeChapter?.id === chapter.id ? activeTocRef : null}
-                onClick={() => goToPage(chapter.page)}
+                onClick={() => hasOriginalEpub ? epubReader.current?.display(chapter.href) : goToPage(chapter.page)}
               >
                 <span>{chapter.title}</span>
-                <small>{chapter.page + 1}</small>
+                <small>{chapter.page != null ? chapter.page + 1 : ""}</small>
               </button>
             ))}
           </div>
         </nav>
 
         <div className="reader-stage">
+        {hasOriginalEpub ? <OriginalEpubReader ref={epubReader} book={book} vocabulary={vocabulary}
+          onSelectWord={selectWord} onContents={setEpubContents} onChapter={setEpubChapter} onNotice={onNotice} theme={theme}
+          fontSize={epubFontSize} fontFamily={epubFontFamily} pageWidth={pageWidth} legacyPages={pagination.pages.length}
+          initialAnchor={pagination.pages[Math.max(0, Number(book.progress?.page) || 0)]?.sentences?.[0]} /> : <>
         <article
           className="reader-page"
           style={{ maxWidth: pageWidth, fontFamily, fontSize }}
@@ -1121,6 +1134,7 @@ function Reader({ book, vocabulary, onRefresh, onNotice, theme, onToggleTheme })
             <ChevronRight size={18} />
           </button>
         </div>
+        </>}
         </div>
 
         <aside className={`reader-inspector ${selected ? "has-selection" : "no-selection"}`}>
@@ -1553,6 +1567,11 @@ function VocabularyLearning({ vocabulary, onRefresh }) {
   const [flipped, setFlipped] = useState(false);
   const [learnedOverrides, setLearnedOverrides] = useState({});
   const [completionPrompt, setCompletionPrompt] = useState(false);
+  const [reviewQueue, setReviewQueue] = useState([]);
+  const [history, setHistory] = useState([]);
+  const [transition, setTransition] = useState({ revision: 0, direction: "next" });
+  const [saving, setSaving] = useState(false);
+  const [learningError, setLearningError] = useState("");
   const baseGroup = groups[groupIndex] || [];
   const group = useMemo(
     () => baseGroup.map((item) => ({
@@ -1563,7 +1582,7 @@ function VocabularyLearning({ vocabulary, onRefresh }) {
     })),
     [baseGroup, learnedOverrides],
   );
-  const card = group[cardIndex];
+  const card = group.find((item) => item.id === reviewQueue[0]) || group[cardIndex];
   const learned = group.filter((item) => item.learned).length;
   const completedCurrentGroup = group.length && group.every((item) => item.learned);
 
@@ -1571,11 +1590,12 @@ function VocabularyLearning({ vocabulary, onRefresh }) {
     setCardIndex(0);
     setFlipped(false);
     setCompletionPrompt(false);
+    setHistory([]);
+    setReviewQueue((groups[groupIndex] || []).filter((item) => !item.learned).map((item) => item.id));
   }, [groupIndex]);
 
   useEffect(() => {
     setLearnedOverrides({});
-    setCompletionPrompt(false);
   }, [vocabulary]);
 
   if (!vocabulary.length) return <div className="empty-state">Salveaza cuvinte din reader pentru flashcards.</div>;
@@ -1593,6 +1613,8 @@ function VocabularyLearning({ vocabulary, onRefresh }) {
     setCardIndex(0);
     setFlipped(false);
     setCompletionPrompt(false);
+    setReviewQueue(group.map((item) => item.id));
+    setHistory([]);
     await onRefresh();
   };
 
@@ -1611,33 +1633,43 @@ function VocabularyLearning({ vocabulary, onRefresh }) {
     }
   };
 
-  const advanceCard = async () => {
-    setFlipped(false);
-    if (cardIndex < group.length - 1) {
-      setCardIndex(cardIndex + 1);
-    } else {
-      await finishGroup();
-    }
-  };
-
-  const updateLearned = async () => {
+  const moveCard = (later = false) => {
     if (!card) return;
-    setLearnedOverrides((current) => ({ ...current, [card.id]: true }));
-    await api.updateVocabulary(card.id, { learned: true });
-    await api.recordActivity("vocabulary", { count: 1, source: "learning-mode" });
-    await onRefresh();
-    if (cardIndex < group.length - 1) {
-      setFlipped(false);
-      setCardIndex(cardIndex + 1);
-    } else {
-      await finishGroup();
-    }
-  };
-
-  const goBack = () => {
-    setCardIndex(Math.max(0, cardIndex - 1));
+    const queue = reviewQueue.length ? reviewQueue : group.filter((item) => !item.learned).map((item) => item.id);
+    setHistory((previous) => [...previous, { queue: [...queue], cardIndex }]);
+    const next = advanceReviewQueue(queue, card.id, later);
+    setReviewQueue(next);
     setFlipped(false);
+    setTransition((value) => ({ revision: value.revision + 1, direction: "next" }));
+    if (next.length) setCardIndex(Math.max(0, group.findIndex((item) => item.id === next[0])));
+    else finishGroup();
   };
+  const advanceCard = () => moveCard(true);
+  const updateLearned = async () => {
+    if (!card || saving) return;
+    setSaving(true);
+    setLearningError("");
+    try {
+      await api.updateVocabulary(card.id, { learned: true });
+      setLearnedOverrides((current) => ({ ...current, [card.id]: true }));
+      moveCard();
+      // A tracking failure must not undo a successfully saved word.
+      await api.recordActivity("vocabulary", { count: 1, source: "learning-mode" }).catch(() => {});
+      await onRefresh();
+    } catch (error) { setLearningError(error.message); }
+    finally { setSaving(false); }
+  };
+  const goBack = () => {
+    const previous = history[history.length - 1];
+    if (!previous) return;
+    setReviewQueue(previous.queue);
+    setCardIndex(previous.cardIndex);
+    setHistory((value) => value.slice(0, -1));
+    setCompletionPrompt(false);
+    setFlipped(false);
+    setTransition((value) => ({ revision: value.revision + 1, direction: "back" }));
+  };
+  const groupFinished = completionPrompt || completedCurrentGroup;
 
   return (
     <section className="learning-layout">
@@ -1658,7 +1690,8 @@ function VocabularyLearning({ vocabulary, onRefresh }) {
         </div>
       </div>
 
-      {card && (
+      {learningError && <div role="alert" className="quiz-error">{learningError}</div>}
+      {card && !groupFinished && (
         <div className="learning-workspace">
           <aside className="learning-progress-panel">
             <span className="eyebrow">Progres grup</span>
@@ -1666,13 +1699,14 @@ function VocabularyLearning({ vocabulary, onRefresh }) {
             <ProgressBar value={group.length ? Math.round((learned / group.length) * 100) : 0} />
             <dl>
               <div><dt>Card curent</dt><dd>{cardIndex + 1}</dd></div>
-              <div><dt>Ramase</dt><dd>{Math.max(0, group.length - cardIndex - 1)}</dd></div>
+              <div><dt>Ramase</dt><dd>{reviewQueue.length}</dd></div>
               <div><dt>Carte</dt><dd>{card.bookTitle || "Necunoscuta"}</dd></div>
             </dl>
           </aside>
 
           <article
-            className={`flashcard ${flipped ? "flipped" : ""}`}
+            key={transition.revision}
+            className={`flashcard card-enter-${transition.direction} ${flipped ? "flipped" : ""}`}
           >
             <button type="button" className="flashcard-flip" onClick={() => setFlipped(!flipped)}
               aria-label={flipped ? "Afiseaza cuvantul in engleza" : "Afiseaza traducerea in romana"} />
@@ -1704,7 +1738,7 @@ function VocabularyLearning({ vocabulary, onRefresh }) {
         </div>
       )}
 
-      {completionPrompt && (
+      {groupFinished && (
         <div className="learning-complete-card" role="status" aria-live="polite">
           <div>
             <span className="eyebrow">Grup finalizat</span>
@@ -1731,25 +1765,19 @@ function VocabularyLearning({ vocabulary, onRefresh }) {
       <div className="learning-actions">
         <button
           className="secondary-button"
-          onClick={goBack}
+          onClick={goBack} disabled={saving || !history.length}
         >
           <ChevronLeft size={16} />
           Inapoi
         </button>
-        <button className="secondary-button repeat-button" onClick={advanceCard}>
+        {!groupFinished && <button className="secondary-button repeat-button" disabled={saving} onClick={advanceCard}>
           <RotateCcw size={16} />
           Repeta mai tarziu
-        </button>
-        {completedCurrentGroup && (
-          <button className="secondary-button" onClick={resetGroupProgress}>
-            <RotateCcw size={16} />
-            Reseteaza grupul
-          </button>
-        )}
-        <button className="primary-button" onClick={updateLearned}>
+        </button>}
+        {!groupFinished && <button className="primary-button" disabled={saving} onClick={updateLearned}>
           <Check size={16} />
           Stiu, urmatorul
-        </button>
+        </button>}
       </div>
     </section>
   );
@@ -1956,7 +1984,7 @@ function CoachView({ coach: rawCoach, onRefresh, onToggleTask, stats }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [selectedDate, setSelectedDate] = useState(() => todayKey());
-  const dateInputRef = useRef(null);
+
 
   useEffect(() => {
     if (coach?.tracker?.today?.date) {
@@ -2047,22 +2075,8 @@ function CoachView({ coach: rawCoach, onRefresh, onToggleTask, stats }) {
             </div>
             <div className="streak-tools">
               <span className="streak-badge">{coach?.tracker?.streak || 0} zile consecutive</span>
-              <button
-                type="button"
-                className="icon-button coach-date-button"
-                title="Alege ziua"
-                onClick={() => dateInputRef.current?.showPicker?.() || dateInputRef.current?.click()}
-              >
-                <CalendarDays size={16} />
-              </button>
-              <input
-                ref={dateInputRef}
-                className="coach-date-input"
-                type="date"
-                aria-label="Ziua din jurnal"
-                value={selectedDate}
-                onChange={(event) => setSelectedDate(event.target.value)}
-              />
+              <ActivityCalendar selectedDate={selectedDate} onSelect={setSelectedDate}
+                activity={coach?.tracker?.activityByDate || {}} progress={coach?.tracker?.progressByDate || {}} />
             </div>
           </div>
           <div className="week-progress">
@@ -2126,7 +2140,7 @@ function CoachView({ coach: rawCoach, onRefresh, onToggleTask, stats }) {
             ) : (
               <div className="coach-day-note">
                 <strong>Task-uri bifate</strong>
-                <p>Nu exista activitate salvata pentru aceasta zi.</p>
+                <p>Niciun task bifat pentru aceasta zi.</p>
               </div>
             )}
           </div>

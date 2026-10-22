@@ -9,6 +9,7 @@
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {
+    "epubjs": "^0.3.93",
     "firebase": "^12.16.0",
     "jszip": "^3.10.1",
     "lucide-react": "^0.468.0",
