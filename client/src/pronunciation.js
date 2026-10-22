@@ -72,8 +72,9 @@ export function createPronouncer(browser, { startTimeout = 6000 } = {}) {
   return { speak, stop, get activeUtterance() { return current?.utterance || null; }, destroy() { stop(); synth?.removeEventListener?.('voiceschanged', refreshVoices); } };
 }
 const proxyUrl = import.meta.env?.VITE_AI_PROXY_URL || '';
+const recordedEnabled = import.meta.env?.VITE_RECORDED_PRONUNCIATION !== 'off';
 let pronouncer, recordedPronouncer;
-export function usesRecordedPronunciation() { return Boolean(proxyUrl && typeof window !== 'undefined' && window.Audio && isAppleTouchDevice(window)); }
+export function usesRecordedPronunciation() { return Boolean(recordedEnabled && proxyUrl && typeof window !== 'undefined' && window.Audio && isAppleTouchDevice(window)); }
 export function preparePronunciation() {
   if (usesRecordedPronunciation()) { recordedPronouncer ||= createRecordedPronouncer(window, proxyUrl); return recordedPronouncer; }
   pronouncer ||= createPronouncer(window); return pronouncer;
