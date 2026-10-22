@@ -89,6 +89,7 @@ const OriginalEpubReader = forwardRef(function OriginalEpubReader({ book, vocabu
       rendition = epub.renderTo(viewport.current, { width: "100%", height: "100%", spread: "none", flow: "paginated", allowScriptedContent: false });
       engine.current = { book: epub, rendition };
       rendition.hooks.content.register((contents) => {
+        if (!active) return;
         const doc = contents.document;
         // Preserve original CSS, fonts and images. Only add saved-word decoration.
         const style = doc.createElement("style"); style.dataset.linguaread = "highlights";
@@ -150,9 +151,17 @@ const OriginalEpubReader = forwardRef(function OriginalEpubReader({ book, vocabu
       // Automatic layout/restore events must never advance or overwrite saved progress.
       engine.current.move = async (direction) => { userMoved = true; if (direction === "next") readingSteps += 1; await rendition[direction](); };
       engine.current.jump = async (target) => { userMoved = true; readingSteps = 0; await rendition.display(target); };
-      resize = new ResizeObserver(() => { if (active) rendition.resize(); }); resize.observe(viewport.current);
+      let lastWidth = viewport.current.clientWidth, lastHeight = viewport.current.clientHeight;
+      resize = new ResizeObserver(() => {
+        if (!active || !viewport.current) return;
+        const width = viewport.current.clientWidth, height = viewport.current.clientHeight;
+        if (width === lastWidth && height === lastHeight) return;
+        lastWidth = width; lastHeight = height;
+        rendition.resize(width, height, locationRef.current?.start?.cfi || target);
+      });
+      resize.observe(viewport.current);
     })().catch(handleError);
-    return () => { active = false; ready = false; clearTimeout(timer); resize?.disconnect(); listeners.forEach((off) => off()); engine.current = null; rendition?.destroy(); epub?.destroy(); };
+    return () => { active = false; ready = false; clearTimeout(timer); resize?.disconnect(); listeners.forEach((off) => off()); engine.current = null; rendition?.q.clear(); rendition?.q.stop(); rendition?.destroy(); epub?.destroy(); };
   }, [book.id, book.epubArchive]);
   useEffect(() => { refreshMarks.current(); }, [vocabulary]);
   useEffect(() => {
@@ -175,7 +184,7 @@ const OriginalEpubReader = forwardRef(function OriginalEpubReader({ book, vocabu
       {status && <div role="status" className="epub-status">{status}</div>}
       {error && <div role="alert" className="quiz-error">{error} Textul si marcajele salvate sunt pastrate.</div>}
       <div className="epub-viewport" ref={viewport} aria-label="Continut EPUB original" />
-      {location && <div className="epub-location">{Math.round(location.start.percentage * 100)}% · {location.start.displayed.page} / {location.start.displayed.total} in sectiune</div>}
+      {location && <div className="epub-location" data-epub-cfi={location.start.cfi}>{Math.round(location.start.percentage * 100)}% · {location.start.displayed.page} / {location.start.displayed.total} in sectiune</div>}
     </article>
     <div className="page-navigation">
       <button className="secondary-button" disabled={!location || location.atStart || navigating} onClick={() => move("prev")}><ChevronLeft size={18} />Anterioara</button>

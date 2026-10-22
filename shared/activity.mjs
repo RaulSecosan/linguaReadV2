@@ -57,4 +57,3 @@ export function hasAnyActivity(activity) {
     || activity.vocabularyPracticed > 0
     || activity.tasksCompleted > 0;
 }
-
