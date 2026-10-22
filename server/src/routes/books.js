@@ -73,46 +73,54 @@ router.get("/:id", async (request, response) => {
   response.json(book);
 });
 
-router.post("/", upload.fields([{ name: "book", maxCount: 1 }, { name: "cover", maxCount: 1 }]), async (request, response) => {
-  const bookFile = request.files?.book?.[0];
-  if (!bookFile) return response.status(400).json({ error: "Fisierul cartii este obligatoriu." });
+router.post("/", upload.fields([{ name: "book", maxCount: 1 }, { name: "cover", maxCount: 1 }]), async (request, response, next) => {
+  try {
+    const bookFile = request.files?.book?.[0];
+    if (!bookFile) throw Object.assign(new Error("Fisierul cartii este obligatoriu."), { status: 400 });
 
-  const fileType = path.extname(bookFile.originalname).replace(".", "").toLowerCase();
-  const extracted = await extractBook(bookFile.path, bookFile.originalname);
-  const { text } = extracted;
-  if (!text) return response.status(400).json({ error: "Nu am gasit text in fisier." });
+    const fileType = path.extname(bookFile.originalname).replace(".", "").toLowerCase();
+    const extracted = await extractBook(bookFile.path, bookFile.originalname);
+    const { text } = extracted;
+    if (!text) throw Object.assign(new Error("Nu am gasit text in fisier."), { status: 400 });
 
-  const coverFile = request.files?.cover?.[0];
-  const analysis = analyzeText(text);
-  const book = {
-    id: uuid(),
-    title: request.body.title || extracted.metadata?.title || path.basename(bookFile.originalname, path.extname(bookFile.originalname)),
-    author: request.body.author || extracted.metadata?.author || "",
-    fileType,
-    originalName: bookFile.originalname,
-    storedPath: bookFile.path,
-    coverUrl: coverFile ? `/uploads/covers/${path.basename(coverFile.path)}` : "",
-    text,
-    structureVersion: extracted.structureVersion || 2,
-    chapters: extracted.chapters,
-    sourcePages: extracted.sourcePages,
-    wordCount: text.split(/\s+/).filter(Boolean).length,
-    pageCount: extracted.sourcePages?.length || Math.max(1, Math.ceil(analysis.wordCount / 250)),
-    analysis,
-    createdAt: new Date().toISOString(),
-    progress: {
-      percent: 0,
-      position: 0,
-      updatedAt: new Date().toISOString(),
-    },
-    bookmarks: [],
-  };
+    const coverFile = request.files?.cover?.[0];
+    const analysis = analyzeText(text);
+    const book = {
+      id: uuid(),
+      title: request.body.title || extracted.metadata?.title || path.basename(bookFile.originalname, path.extname(bookFile.originalname)),
+      author: request.body.author || extracted.metadata?.author || "",
+      fileType,
+      originalName: bookFile.originalname,
+      storedPath: bookFile.path,
+      coverUrl: coverFile ? `/uploads/covers/${path.basename(coverFile.path)}` : "",
+      text,
+      structureVersion: extracted.structureVersion || 2,
+      chapters: extracted.chapters,
+      sourcePages: extracted.sourcePages,
+      wordCount: text.split(/\s+/).filter(Boolean).length,
+      pageCount: extracted.sourcePages?.length || Math.max(1, Math.ceil(analysis.wordCount / 250)),
+      analysis,
+      createdAt: new Date().toISOString(),
+      progress: {
+        percent: 0,
+        position: 0,
+        updatedAt: new Date().toISOString(),
+      },
+      bookmarks: [],
+    };
 
-  await mutateDb((data) => {
-    data.books.unshift(book);
-  });
+    await mutateDb((data) => {
+      data.books.unshift(book);
+    });
 
-  response.status(201).json(book);
+    response.status(201).json(book);
+  } catch (error) {
+    // Only remove files from this failed request; existing books are untouched.
+    const files = Object.values(request.files || {}).flat();
+    await Promise.all(files.map((file) => fs.unlink(file.path).catch(() => undefined)));
+    error.status ||= 400;
+    next(error);
+  }
 });
 
 router.patch("/:id", upload.single("cover"), async (request, response) => {

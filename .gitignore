@@ -1,6 +1,8 @@
 node_modules
 dist
 .env
+.firebase
+client/.env.production
 .DS_Store
 server/data/db.json
 server/data/db.json.bak

@@ -9,6 +9,7 @@
     "server:dev": "npm --prefix server run dev",
     "build": "npm --prefix client run build",
     "start": "npm --prefix server start",
-    "install:all": "npm install && npm --prefix client install && npm --prefix server install"
+    "install:all": "npm install && npm --prefix client install && npm --prefix server install",
+    "test": "node --test tests/*.test.mjs"
   }
 }

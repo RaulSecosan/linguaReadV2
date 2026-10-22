@@ -1,3 +1,5 @@
+import { DOMParser } from "linkedom";
+import { extractReadingBlocks, blocksText } from "../../../shared/epubStructure.mjs";
 import AdmZip from "adm-zip";
 import { XMLParser } from "fast-xml-parser";
 import fs from "node:fs/promises";
@@ -27,7 +29,8 @@ async function extractPdf(filePath) {
   try {
     const pdfParse = (await import("pdf-parse")).default;
     const sourcePages = [];
-    const data = await pdfParse(buffer, {
+    // PDF.js 1.x mishandles pooled Node Buffer offsets; give it owned bytes.
+    const data = await pdfParse(new Uint8Array(buffer), {
       pagerender: async (pageData) => {
         const content = await pageData.getTextContent({
           normalizeWhitespace: false,
@@ -81,11 +84,19 @@ async function extractEpub(filePath) {
       const entry = zip.getEntry(chapterPath);
       if (!entry) return null;
       const html = entry.getData().toString("utf8");
-      const text = normalizeText(htmlToText(html));
+      const htmlDoc = new DOMParser().parseFromString(html, "text/html");
+      const stylesheets = [...htmlDoc.querySelectorAll('link[rel="stylesheet"]')].map((link) => {
+        const cssPath = path.posix.normalize(path.posix.join(path.posix.dirname(chapterPath), link.getAttribute("href") || ""));
+        return zip.getEntry(cssPath)?.getData().toString("utf8") || "";
+      });
+      const blocks = extractReadingBlocks(html, { parseDocument: (source) => new DOMParser().parseFromString(source, "text/html"), stylesheets });
+      const text = blocksText(blocks);
       return {
         path: chapterPath,
         html,
         text,
+        blocks,
+        stylesheets,
       };
     })
     .filter(Boolean);
@@ -101,7 +112,7 @@ async function extractEpub(filePath) {
       author: metadataValue(metadata, "creator"),
       language: metadataValue(metadata, "language"),
     },
-    structureVersion: 3,
+    structureVersion: 4,
   };
 }
 
@@ -221,6 +232,7 @@ function buildEpubChapters(spineDocuments, navigation) {
       id: `chapter-${index + 1}`,
       title: chapterTitleFromDocument(document, index),
       text: document.text,
+      blocks: document.blocks,
     }));
   }
 
@@ -237,6 +249,7 @@ function buildEpubChapters(spineDocuments, navigation) {
       id: `chapter-${index + 1}`,
       title: chapterTitleFromDocument(document, index),
       text: document.text,
+      blocks: document.blocks,
     }));
   }
 
@@ -244,15 +257,22 @@ function buildEpubChapters(spineDocuments, navigation) {
     const next = validNavigation[index + 1];
     const endIndex = next ? next.spineIndex : spineDocuments.length;
     const pieces = [];
+    const readingBlocks = [];
 
     for (let documentIndex = item.spineIndex; documentIndex < Math.max(item.spineIndex + 1, endIndex); documentIndex += 1) {
       const document = spineDocuments[documentIndex];
       if (!document) continue;
       if (documentIndex === item.spineIndex && item.fragment) {
         const nextFragment = next?.path === item.path ? next.fragment : "";
-        pieces.push(extractHtmlSection(document.html, item.fragment, nextFragment));
+        const start = findAnchorOffset(document.html, item.fragment);
+        const end = nextFragment ? findAnchorOffset(document.html, nextFragment) : -1;
+        const section = document.html.slice(start >= 0 ? start : 0, end > start ? end : document.html.length);
+        const blocks = extractReadingBlocks(`<html><body>${section}</body></html>`, { parseDocument: (source) => new DOMParser().parseFromString(source, "text/html"), stylesheets: document.stylesheets });
+        readingBlocks.push(...blocks);
+        pieces.push(blocksText(blocks));
       } else {
         pieces.push(document.text);
+        readingBlocks.push(...document.blocks);
       }
     }
 
@@ -260,6 +280,7 @@ function buildEpubChapters(spineDocuments, navigation) {
       id: `chapter-${index + 1}`,
       title: item.title,
       text: normalizeText(pieces.join("\n\n")),
+      blocks: readingBlocks,
       sourcePath: item.path,
     };
   }).filter((chapter) => chapter.text);

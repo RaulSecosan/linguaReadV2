@@ -1,3 +1,4 @@
+import { normalizeCoach } from "../../../shared/coachPresentation.mjs";
 import express from "express";
 import { mutateDb, readDb } from "../services/db.js";
 import {
@@ -50,12 +51,13 @@ function taskType(item, index) {
 }
 
 function buildTasks(analysis) {
-  return (analysis.plan || []).slice(0, 5).map((item, index) => ({
+  return normalizeCoach(analysis).plan.slice(0, 5).map((item, index) => ({
     id: `${taskType(item, index)}-${index + 1}`,
     type: item.type || taskType(item, index),
     title: item.title,
     detail: item.detail,
-    minutes: Math.max(1, Math.min(60, Number(item.minutes) || 10)),
+    minutes: item.minutes == null ? null : Math.max(1, Math.min(60, Number(item.minutes))),
+    time: item.time || "",
     completed: false,
   }));
 }
@@ -78,7 +80,7 @@ function ensureTodayTasks(data, analysis, replace = false) {
 
 function coachDashboard(data) {
   const statistics = computeStatistics(data);
-  const analysis = data.coach?.latest || defaultCoachAnalysis(data, statistics);
+  const analysis = normalizeCoach(data.coach?.latest || defaultCoachAnalysis(data, statistics));
   const today = ensureTodayTasks(data, analysis);
   const days = [];
   const current = new Date();

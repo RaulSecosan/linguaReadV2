@@ -76,6 +76,11 @@ router.patch("/:id", async (request, response) => {
     const item = data.vocabulary.find((entry) => entry.id === request.params.id);
     if (!item) return null;
     if (typeof request.body.learned === "boolean") item.learned = request.body.learned;
+    if (typeof request.body.translation === "string") item.translation = request.body.translation.trim();
+    if (typeof request.body.sentence === "string") item.sentence = request.body.sentence.trim();
+    if (typeof request.body.sentenceRo === "string") item.sentenceRo = request.body.sentenceRo.trim();
+    if (typeof request.body.explanation === "string") item.explanation = request.body.explanation.trim();
+    if (typeof request.body.notes === "string") item.notes = request.body.notes.trim();
     item.updatedAt = new Date().toISOString();
     return item;
   });
@@ -124,7 +129,7 @@ function csvCell(value) {
 }
 
 function normalizeWord(word) {
-  return String(word || "").toLowerCase().replace(/^[^a-z']+|[^a-z']+$/gi, "");
+  return String(word || "").toLowerCase().replace(/’/g, "'").replace(/^[^a-z']+|[^a-z']+$/gi, "");
 }
 
 export default router;

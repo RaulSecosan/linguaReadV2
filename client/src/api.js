@@ -2,6 +2,7 @@ const defaultApiBase =
   typeof window === "undefined" ? "http://localhost:4000/api" : `${window.location.protocol}//${window.location.hostname}:4000/api`;
 
 export const API_BASE = import.meta.env.VITE_API_URL || defaultApiBase;
+export const DATA_PROVIDER = import.meta.env.VITE_DATA_PROVIDER || "server";
 
 async function request(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, {
@@ -22,7 +23,7 @@ async function request(path, options = {}) {
   return response.json();
 }
 
-export const api = {
+const serverApi = {
   books: () => request("/books"),
   book: (id) => request(`/books/${id}`),
   uploadBook: (formData) => request("/books", { method: "POST", body: formData }),
@@ -53,6 +54,51 @@ export const api = {
     request(`/ai/coach/tasks/${date}/${taskId}`, { method: "PATCH", body: JSON.stringify({ completed }) }),
   statistics: () => request("/statistics"),
   exportUrl: (params = {}) => `${API_BASE}/vocabulary/export${toQuery(params)}`,
+};
+
+let providerPromise;
+
+async function providerApi() {
+  if (DATA_PROVIDER === "server") return serverApi;
+  providerPromise ||= DATA_PROVIDER === "firestore"
+    ? import("./firestoreApi").then((module) => module.firestoreApi)
+    : import("./githubApi").then((module) => module.githubApi);
+  return providerPromise;
+}
+
+export const api = {
+  books: async () => (await providerApi()).books(),
+  book: async (id) => (await providerApi()).book(id),
+  uploadBook: async (formData) => (await providerApi()).uploadBook(formData),
+  updateBook: async (bookId, formData) => (await providerApi()).updateBook(bookId, formData),
+  deleteBook: async (bookId, keepVocabulary = false) => (await providerApi()).deleteBook(bookId, keepVocabulary),
+  updateProgress: async (bookId, payload) => (await providerApi()).updateProgress(bookId, payload),
+  saveReadingPosition: async (bookId, payload) => (await providerApi()).saveReadingPosition(bookId, payload),
+  addBookmark: async (bookId, payload) => (await providerApi()).addBookmark(bookId, payload),
+  deleteBookmark: async (bookId, bookmarkId) => (await providerApi()).deleteBookmark(bookId, bookmarkId),
+  vocabulary: async (params = {}) => (await providerApi()).vocabulary(params),
+  saveVocabulary: async (payload) => (await providerApi()).saveVocabulary(payload),
+  updateVocabulary: async (id, payload) => (await providerApi()).updateVocabulary(id, payload),
+  deleteVocabulary: async (id) => (await providerApi()).deleteVocabulary(id),
+  translate: async (payload, options = {}) => (await providerApi()).translate(payload, options),
+  summary: async (payload) => (await providerApi()).summary(payload),
+  difficulty: async (payload) => (await providerApi()).difficulty(payload),
+  quiz: async (payload) => (await providerApi()).quiz(payload),
+  coach: async () => (await providerApi()).coach(),
+  generateCoach: async (model = "gpt") => (await providerApi()).generateCoach(model),
+  updateCoachTask: async (date, taskId, completed) => (await providerApi()).updateCoachTask(date, taskId, completed),
+  recordActivity: async (type, payload = {}) => {
+    const provider = await providerApi();
+    if (provider.recordActivity) return provider.recordActivity(type, payload);
+    return true;
+  },
+  statistics: async () => (await providerApi()).statistics(),
+  exportVocabulary: async (params = {}) => {
+    const provider = await providerApi();
+    if (provider.exportVocabulary) return provider.exportVocabulary(params);
+    window.location.href = provider.exportUrl(params);
+  },
+  exportUrl: (params = {}) => serverApi.exportUrl(params),
 };
 
 function toQuery(params) {

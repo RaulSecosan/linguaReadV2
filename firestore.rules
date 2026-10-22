@@ -1,0 +1,13 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /linguaread/{document} {
+      allow read, write: if document == "main";
+      match /{subcollection}/{subdocument} {
+        allow read, write: if document == "main"
+          && subcollection in ["books", "bookContent", "vocabulary"];
+      }
+    }
+  }
+}

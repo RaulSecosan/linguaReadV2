@@ -2,6 +2,7 @@ import {
   BarChart3,
   BookOpen,
   Bookmark,
+  CalendarDays,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -29,7 +30,9 @@ import {
 } from "lucide-react";
 import React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { API_BASE, api } from "./api";
+import { API_BASE, DATA_PROVIDER, api } from "./api";
+import { chapterTitle, paginateBook, splitSentences } from "./readingLayout";
+import { normalizeCoach } from "../../shared/coachPresentation.mjs";
 
 const navigation = [
   { id: "dashboard", label: "Dashboard", icon: BarChart3 },
@@ -47,73 +50,10 @@ const fontOptions = [
   { label: "Mono", value: "'SFMono-Regular', Consolas, monospace" },
 ];
 
-const normalizeWord = (word) => word.toLowerCase().replace(/^[^a-z']+|[^a-z']+$/gi, "");
-
-const splitSentences = (text = "") => {
-  const matches = text.replace(/\s+/g, " ").trim().match(/[^.!?]+[.!?]+|[^.!?]+$/g);
-  return matches?.map((sentence) => sentence.trim()).filter(Boolean) || [];
-};
+const normalizeWord = (word) => word.toLowerCase().replace(/’/g, "'").replace(/^[^a-z']+|[^a-z']+$/gi, "");
 
 const normalizeAnchorText = (text = "") => text.replace(/\s+/g, " ").trim().slice(0, 220);
-
-const paginateBook = (book, wordsPerPage) => {
-  if (!book) return { pages: [], contents: [] };
-
-  if (book.sourcePages?.length) {
-    const pages = book.sourcePages.map((text, index) => ({
-      text,
-      chapterId: book.chapters?.find((chapter) => index >= chapter.startPage && index <= chapter.endPage)?.id,
-      chapterTitle: book.chapters?.find((chapter) => index >= chapter.startPage && index <= chapter.endPage)?.title || "Inceput",
-      sourcePage: index + 1,
-    }));
-    const contents = (book.chapters || []).map((chapter) => ({
-      id: chapter.id,
-      title: chapter.title,
-      page: chapter.startPage || 0,
-    }));
-    return { pages, contents };
-  }
-
-  const chapters = book.chapters?.length
-    ? book.chapters
-    : [{ id: "chapter-1", title: book.title, text: book.text || "" }];
-  const pages = [];
-  const contents = [];
-  chapters.forEach((chapter) => {
-    contents.push({ id: chapter.id, title: chapter.title, page: pages.length });
-    const sentences = splitSentences(chapter.text);
-    let pageText = "";
-    let wordCount = 0;
-    let sentenceStartIndex = 0;
-    sentences.forEach((sentence, sentenceIndex) => {
-      const sentenceWords = sentence.split(/\s+/).filter(Boolean).length;
-      if (pageText && wordCount + sentenceWords > wordsPerPage) {
-        pages.push({
-          text: pageText.trim(),
-          chapterId: chapter.id,
-          chapterTitle: chapter.title,
-          sentenceStartIndex,
-          sentenceEndIndex: sentenceIndex - 1,
-        });
-        pageText = "";
-        wordCount = 0;
-        sentenceStartIndex = sentenceIndex;
-      }
-      pageText += `${sentence} `;
-      wordCount += sentenceWords;
-    });
-    if (pageText.trim()) {
-      pages.push({
-        text: pageText.trim(),
-        chapterId: chapter.id,
-        chapterTitle: chapter.title,
-        sentenceStartIndex,
-        sentenceEndIndex: Math.max(sentenceStartIndex, sentences.length - 1),
-      });
-    }
-  });
-  return { pages, contents };
-};
+const todayKey = () => new Date().toISOString().slice(0, 10);
 
 const resolveSavedPageIndex = (savedPosition, pages) => {
   if (!savedPosition || !pages.length) return null;
@@ -157,7 +97,7 @@ const formatReadingTime = (minutes = 0) => {
 
 function App() {
   const [activeView, setActiveView] = useState("dashboard");
-  const [appTheme, setAppTheme] = useState(() => localStorage.getItem("lr-theme") || "light");
+  const [appTheme, setAppTheme] = useState(() => localStorage.getItem("lr-theme") || "dark");
   const [books, setBooks] = useState([]);
   const [currentBookId, setCurrentBookId] = useState("");
   const [currentBook, setCurrentBook] = useState(null);
@@ -325,6 +265,7 @@ function App() {
                 onOpenBook={handleOpenBook}
                 onUpdateBook={handleUpdateBook}
                 onDeleteBook={handleDeleteBook}
+                onNotice={setNotice}
               />
             )}
             {activeView === "reader" && (
@@ -338,7 +279,7 @@ function App() {
               />
             )}
             {activeView === "vocabulary" && (
-              <VocabularyView books={books} vocabulary={vocabulary} onRefresh={refresh} />
+              <VocabularyView books={books} vocabulary={vocabulary} onRefresh={refresh} onNotice={setNotice} />
             )}
             {activeView === "learning" && (
               <LearningMode
@@ -434,36 +375,51 @@ function Dashboard({ stats, books, vocabulary, onOpenBook }) {
   );
 }
 
-function LibraryView({ books, onUpload, onOpenBook, onUpdateBook, onDeleteBook }) {
+function LibraryView({ books, onUpload, onOpenBook, onUpdateBook, onDeleteBook, onNotice }) {
   const [title, setTitle] = useState("");
   const [author, setAuthor] = useState("");
   const [bookFile, setBookFile] = useState(null);
   const [coverFile, setCoverFile] = useState(null);
   const [busy, setBusy] = useState(false);
   const [editingBook, setEditingBook] = useState(null);
+  const [showUpload, setShowUpload] = useState(books.length === 0);
   const [viewMode, setViewMode] = useState(() => localStorage.getItem("lr-library-view") || "grid");
 
   const submit = async (event) => {
     event.preventDefault();
+    const submittedForm = event.currentTarget;
     if (!bookFile) return;
     setBusy(true);
-    const formData = new FormData();
-    formData.append("book", bookFile);
-    if (coverFile) formData.append("cover", coverFile);
-    if (title) formData.append("title", title);
-    if (author) formData.append("author", author);
-    await onUpload(formData);
-    setTitle("");
-    setAuthor("");
-    setBookFile(null);
-    setCoverFile(null);
-    event.currentTarget.reset();
-    setBusy(false);
+    try {
+      const formData = new FormData();
+      formData.append("book", bookFile);
+      if (coverFile) formData.append("cover", coverFile);
+      if (title) formData.append("title", title);
+      if (author) formData.append("author", author);
+      await onUpload(formData);
+      setTitle("");
+      setAuthor("");
+      setBookFile(null);
+      setCoverFile(null);
+      submittedForm.reset();
+    } catch (error) {
+      onNotice(error.message);
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
-    <section className="library-layout">
-      <form className="upload-panel" onSubmit={submit}>
+    <section className={`library-layout ${showUpload ? "upload-open" : "upload-closed"}`}>
+      <div className="library-intro">
+        <p>Povești de descoperit. Cuvinte care rămân cu tine.</p>
+        <button className="primary-button" type="button" aria-expanded={showUpload} aria-controls="book-upload-form"
+          onClick={() => setShowUpload((value) => !value)}>
+          {showUpload ? <X size={17} /> : <Plus size={17} />}
+          {showUpload ? "Inchide formularul" : "Importa o carte"}
+        </button>
+      </div>
+      <form className="upload-panel" id="book-upload-form" hidden={!showUpload} onSubmit={submit}>
         <div className="section-heading">
           <div>
             <span className="eyebrow">Upload</span>
@@ -689,7 +645,10 @@ function BookSettingsModal({ book, onClose, onSave, onDelete }) {
 
 function Cover({ book }) {
   if (book.coverUrl) {
-    return <img className="cover" src={`${API_BASE.replace("/api", "")}${book.coverUrl}`} alt="" />;
+    const src = /^(data:|https?:)/.test(book.coverUrl) || DATA_PROVIDER === "github"
+      ? book.coverUrl
+      : `${API_BASE.replace("/api", "")}${book.coverUrl}`;
+    return <img className="cover" src={src} alt="" />;
   }
   return (
     <div className="cover generated-cover">
@@ -712,6 +671,10 @@ function Reader({ book, vocabulary, onRefresh, onNotice, theme, onToggleTheme })
   const [busy, setBusy] = useState("");
   const [currentPage, setCurrentPage] = useState(0);
   const [showReaderSettings, setShowReaderSettings] = useState(false);
+  const [showContents, setShowContents] = useState(false);
+  const [editingSelectedVocabulary, setEditingSelectedVocabulary] = useState(false);
+  const [selectedEditDraft, setSelectedEditDraft] = useState({});
+  const [savingSelectedEdit, setSavingSelectedEdit] = useState(false);
   const tocListRef = useRef(null);
   const activeTocRef = useRef(null);
   const savedSentenceRef = useRef(null);
@@ -719,7 +682,7 @@ function Reader({ book, vocabulary, onRefresh, onNotice, theme, onToggleTheme })
   const wordsPerPage = Math.max(180, Math.round(430 * (pageWidth / 760) * (18 / fontSize)));
   const pagination = useMemo(() => paginateBook(book, wordsPerPage), [book, wordsPerPage]);
   const page = pagination.pages[currentPage] || pagination.pages[0];
-  const sentences = useMemo(() => splitSentences(page?.text), [page?.text]);
+  const sentences = useMemo(() => page?.sentences || splitSentences(page?.text), [page]);
   const highlighted = useMemo(() => new Set(vocabulary.map((item) => normalizeWord(item.word))), [vocabulary]);
   const selectedVocabulary = useMemo(
     () => vocabulary.find((item) => normalizeWord(item.word) === normalizeWord(selected?.word || "")),
@@ -767,10 +730,18 @@ function Reader({ book, vocabulary, onRefresh, onNotice, theme, onToggleTheme })
     setDifficulty(null);
     setCurrentPage(Math.max(0, Number(book?.progress?.page) || 0));
     setShowReaderSettings(false);
+    setEditingSelectedVocabulary(false);
+    setSelectedEditDraft({});
   }, [book?.id]);
 
   useEffect(() => {
     if (!selected) return;
+    if (selectedVocabulary?.translation) {
+      setTranslation({ ...selectedVocabulary, sentenceEn: selectedVocabulary.sentence, provider: "saved" });
+      setTranslationError("");
+      setBusy("");
+      return;
+    }
     const controller = new AbortController();
     let active = true;
     setTranslation(null);
@@ -796,7 +767,7 @@ function Reader({ book, vocabulary, onRefresh, onNotice, theme, onToggleTheme })
       active = false;
       controller.abort();
     };
-  }, [selected, model, book?.id, onNotice]);
+  }, [selected, model, book?.id, onNotice, selectedVocabulary]);
 
   const saveProgress = useCallback((nextPage) => {
     if (!book || !pagination.pages.length) return;
@@ -870,7 +841,40 @@ function Reader({ book, vocabulary, onRefresh, onNotice, theme, onToggleTheme })
     if (!selectedVocabulary) return;
     await api.deleteVocabulary(selectedVocabulary.id);
     await onRefresh();
+    setEditingSelectedVocabulary(false);
+    setSelectedEditDraft({});
     onNotice(`"${selectedVocabulary.word}" a fost eliminat din vocabular.`);
+  };
+
+  const startEditSelectedVocabulary = () => {
+    if (!selectedVocabulary) return;
+    setSelectedEditDraft({
+      translation: selectedVocabulary.translation || "",
+      sentence: selectedVocabulary.sentence || selected?.sentence || "",
+      sentenceRo: selectedVocabulary.sentenceRo || translation?.sentenceRo || "",
+      explanation: selectedVocabulary.explanation || translation?.explanation || "",
+      notes: selectedVocabulary.notes || "",
+    });
+    setEditingSelectedVocabulary(true);
+  };
+
+  const updateSelectedDraft = (field, value) => {
+    setSelectedEditDraft((current) => ({ ...current, [field]: value }));
+  };
+
+  const saveSelectedVocabularyEdit = async () => {
+    if (!selectedVocabulary) return;
+    setSavingSelectedEdit(true);
+    try {
+      await api.updateVocabulary(selectedVocabulary.id, selectedEditDraft);
+      await onRefresh();
+      setEditingSelectedVocabulary(false);
+      onNotice(`"${selectedVocabulary.word}" a fost actualizat.`);
+    } catch (error) {
+      onNotice(error.message);
+    } finally {
+      setSavingSelectedEdit(false);
+    }
   };
 
   const loadSummary = async () => {
@@ -900,6 +904,7 @@ function Reader({ book, vocabulary, onRefresh, onNotice, theme, onToggleTheme })
     setTranslationError("");
     setSummary(null);
     setShowReaderSettings(false);
+    setShowContents(false);
     saveProgress(safePage);
   };
 
@@ -926,6 +931,22 @@ function Reader({ book, vocabulary, onRefresh, onNotice, theme, onToggleTheme })
     setSummary(null);
   };
 
+  const changeReadingLayout = (nextFontSize, nextPageWidth) => {
+    const nextWordsPerPage = Math.max(180, Math.round(430 * (nextPageWidth / 760) * (18 / nextFontSize)));
+    const nextPagination = paginateBook(book, nextWordsPerPage);
+    const nextPage = resolveSavedPageIndex({
+      chapterId: page?.chapterId,
+      sentenceIndex: page?.sentenceStartIndex,
+      sourcePage: page?.sourcePage,
+      anchorText: normalizeAnchorText(sentences[0] || page?.text || ""),
+      page: currentPage,
+    }, nextPagination.pages);
+    setFontSize(nextFontSize);
+    setPageWidth(nextPageWidth);
+    setCurrentPage(nextPage || 0);
+    setSelected(null);
+  };
+
   const selectWord = (word, sentence, sentenceIndex, tokenIndex) => {
     setSelected({
       word,
@@ -947,11 +968,11 @@ function Reader({ book, vocabulary, onRefresh, onNotice, theme, onToggleTheme })
         </button>
         <label className="range-label reader-setting-control">
           Aa
-          <input min="15" max="28" value={fontSize} onChange={(event) => setFontSize(Number(event.target.value))} type="range" />
+          <input min="15" max="28" value={fontSize} onChange={(event) => changeReadingLayout(Number(event.target.value), pageWidth)} type="range" />
         </label>
         <label className="select-label compact reader-setting-control">
           <Settings size={16} />
-          <select value={fontFamily} onChange={(event) => setFontFamily(event.target.value)}>
+          <select aria-label="Fontul textului" value={fontFamily} onChange={(event) => setFontFamily(event.target.value)}>
             {fontOptions.map((font) => (
               <option value={font.value} key={font.value}>
                 {font.label}
@@ -961,7 +982,7 @@ function Reader({ book, vocabulary, onRefresh, onNotice, theme, onToggleTheme })
         </label>
         <label className="range-label wide reader-setting-control">
           Latime
-          <input min="560" max="980" value={pageWidth} onChange={(event) => setPageWidth(Number(event.target.value))} type="range" />
+          <input min="560" max="980" value={pageWidth} onChange={(event) => changeReadingLayout(fontSize, Number(event.target.value))} type="range" />
         </label>
         <label className="ai-model-selector reader-setting-control">
           <Sparkles size={16} />
@@ -1008,12 +1029,14 @@ function Reader({ book, vocabulary, onRefresh, onNotice, theme, onToggleTheme })
       </div>
 
       <div className="reader-layout">
-        <nav className="reader-toc" aria-label="Cuprins">
+        <nav className={`reader-toc ${showContents ? "contents-open" : ""}`} aria-label="Cuprins">
           <div className="toc-heading">
             <span className="eyebrow">Cuprins</span>
             <strong>{pagination.contents.length} capitole</strong>
+            <button className="secondary-button contents-toggle" aria-expanded={showContents} aria-controls="reader-contents"
+              onClick={() => setShowContents((value) => !value)}>{showContents ? "Ascunde cuprinsul" : "Arata cuprinsul"}</button>
           </div>
-          <div className="toc-list" ref={tocListRef}>
+          <div className="toc-list" id="reader-contents" ref={tocListRef}>
             {pagination.contents.map((chapter) => (
               <button
                 className={activeChapter?.id === chapter.id ? "active" : ""}
@@ -1039,30 +1062,36 @@ function Reader({ book, vocabulary, onRefresh, onNotice, theme, onToggleTheme })
             <ProgressBar value={progressPercent} />
           </header>
 
-          {sentences.map((sentence, sentenceIndex) => (
-            <span
-              className={`sentence ${
-                savedLocalSentenceIndex === sentenceIndex ? "saved-position-sentence" : ""
-              }`}
-              ref={savedLocalSentenceIndex === sentenceIndex ? savedSentenceRef : null}
-              key={`${sentenceIndex}-${sentence.slice(0, 12)}`}
-            >
-              {sentence.split(/(\b[A-Za-z][A-Za-z'-]*\b)/g).map((part, index) => {
-                const normalized = normalizeWord(part);
-                if (!normalized) return part;
-                const isSelected = selected?.sentenceIndex === sentenceIndex && selected?.tokenIndex === index;
-                return (
-                  <button
-                    className={`word-token ${highlighted.has(normalized) ? "highlighted" : ""} ${isSelected ? "selected-word" : ""}`}
-                    key={`${sentenceIndex}-${index}-${part}`}
-                    onClick={() => selectWord(part, sentence, sentenceIndex, index)}
-                  >
-                    {part}
-                  </button>
-                );
-              })}{" "}
-            </span>
-          ))}
+          <div className="reading-content" lang="en">
+            {(page?.paragraphs || [{ type: "p", parts: sentences.map((text, sentenceIndex) => ({ text, sentenceIndex, runs: [{ text }] })) }]).map((paragraph, paragraphIndex) => {
+              const Tag = /^h[1-6]$/.test(paragraph.type) ? paragraph.type : paragraph.type === "blockquote" ? "blockquote" : "p";
+              return (
+                <Tag className={`reading-paragraph reading-${paragraph.type || "p"}`} style={paragraph.style} key={`${currentPage}-${paragraphIndex}`}>
+                  {paragraph.type === "li" && <span className="reading-list-marker" aria-hidden="true">{paragraph.list === "ordered" ? `${paragraph.listNumber || 1}. ` : "• "}</span>}
+                  {paragraph.parts.map((part, partIndex) => {
+                    const sentenceIndex = part.sentenceIndex;
+                    const sentence = sentences[sentenceIndex] || part.text;
+                    let tokenIndex = 0;
+                    return (
+                      <span className={`sentence ${savedLocalSentenceIndex === sentenceIndex ? "saved-position-sentence" : ""}`}
+                        ref={savedLocalSentenceIndex === sentenceIndex ? savedSentenceRef : null}
+                        key={`${sentenceIndex}-${partIndex}`}>
+                        {(part.runs?.length ? part.runs : [{ text: part.text }]).map((run, runIndex) => (
+                          <span key={runIndex} style={{ fontStyle: run.fontStyle, fontWeight: run.fontWeight }}>
+                            {run.text.split(/(\b[A-Za-z]+(?:['’-][A-Za-z]+)*\b)/g).map((word, index) => {
+                              if (!/^[A-Za-z]+(?:['’-][A-Za-z]+)*$/.test(word)) return word;
+                              const position = `${paragraphIndex}:${partIndex}:${tokenIndex++}`;
+                              return <button key={index} className={`word-token ${highlighted.has(normalizeWord(word)) ? "highlighted" : ""} ${selected?.sentenceIndex === sentenceIndex && selected?.tokenIndex === position ? "selected-word" : ""}`} onClick={() => selectWord(word, sentence, sentenceIndex, position)}>{word}</button>;
+                            })}
+                          </span>
+                        ))}
+                      </span>
+                    );
+                  })}
+                </Tag>
+              );
+            })}
+          </div>
           <footer className="book-page-number">
             {page?.sourcePage ? `Pagina PDF ${page.sourcePage}` : `Pagina ${currentPage + 1}`} din {pagination.pages.length}
           </footer>
@@ -1109,9 +1138,14 @@ function Reader({ book, vocabulary, onRefresh, onNotice, theme, onToggleTheme })
                   <X size={18} />
                 </button>
                 {selectedVocabulary && (
-                  <button className="icon-button remove-highlight" onClick={removeVocabulary} title="Elimina din vocabular si sterge highlight-ul">
-                    <Trash2 size={17} />
-                  </button>
+                  <>
+                    <button className="icon-button" onClick={startEditSelectedVocabulary} title="Editeaza vocabularul salvat">
+                      <Pencil size={17} />
+                    </button>
+                    <button className="icon-button remove-highlight" onClick={removeVocabulary} title="Elimina din vocabular si sterge highlight-ul">
+                      <Trash2 size={17} />
+                    </button>
+                  </>
                 )}
               </div>
               <div className="active-model">
@@ -1134,16 +1168,35 @@ function Reader({ book, vocabulary, onRefresh, onNotice, theme, onToggleTheme })
               ) : translation ? (
                 <>
                   <div className="translation-card">
-                    <span>Traducere · {translation.provider === "ollama" ? "Mistral local" : translation.provider === "openai" ? "OpenAI" : "local"}</span>
+                    <span>Traducere · {translation.provider === "saved" ? "salvata" : translation.provider === "ollama" ? "Mistral local" : translation.provider === "openai" ? "OpenAI" : "local"}</span>
                     <strong>{translation.translation}</strong>
                     <p>{translation.explanation}</p>
                   </div>
-                  <SentenceAudio label="Propozitie EN" text={selected.sentence} lang="en-US" />
+                  <SentenceAudio label={translation.provider === "saved" ? "Context salvat EN" : "Propozitie EN"} text={translation.sentenceEn || selected.sentence} lang="en-US" />
                   <SentenceAudio label="Propozitie RO" text={translation.sentenceRo} lang="ro-RO" />
-                  <button className="primary-button" onClick={saveVocabulary}>
-                    <Check size={16} />
-                    Salveaza vocabular
-                  </button>
+                  {selectedVocabulary ? (
+                    <button className="secondary-button saved-vocabulary-button" disabled>
+                      <Check size={16} />
+                      Salvat in vocabular
+                    </button>
+                  ) : (
+                    <button className="primary-button" onClick={saveVocabulary}>
+                      <Check size={16} />
+                      Salveaza vocabular
+                    </button>
+                  )}
+                  {selectedVocabulary && editingSelectedVocabulary && (
+                    <VocabularyEditor
+                      draft={selectedEditDraft}
+                      onChange={updateSelectedDraft}
+                      onCancel={() => {
+                        setEditingSelectedVocabulary(false);
+                        setSelectedEditDraft({});
+                      }}
+                      onSave={saveSelectedVocabularyEdit}
+                      saving={savingSelectedEdit}
+                    />
+                  )}
                 </>
               ) : null}
             </div>
@@ -1222,10 +1275,70 @@ function AiPanel({ title, items, children }) {
   );
 }
 
-function VocabularyView({ books, vocabulary, onRefresh }) {
+function VocabularyEditor({ draft, onChange, onCancel, onSave, saving }) {
+  return (
+    <div className="vocab-edit-panel">
+      <label>
+        Traducere
+        <input
+          value={draft.translation || ""}
+          onChange={(event) => onChange("translation", event.target.value)}
+        />
+      </label>
+      <label>
+        Context EN
+        <textarea
+          value={draft.sentence || ""}
+          onChange={(event) => onChange("sentence", event.target.value)}
+          rows={3}
+        />
+      </label>
+      <label>
+        Propozitie RO
+        <textarea
+          value={draft.sentenceRo || ""}
+          onChange={(event) => onChange("sentenceRo", event.target.value)}
+          rows={3}
+        />
+      </label>
+      <label>
+        Explicatie
+        <textarea
+          value={draft.explanation || ""}
+          onChange={(event) => onChange("explanation", event.target.value)}
+          rows={3}
+        />
+      </label>
+      <label>
+        Notite personale
+        <textarea
+          value={draft.notes || ""}
+          onChange={(event) => onChange("notes", event.target.value)}
+          rows={3}
+          placeholder="Adauga sensuri, exemple sau observatii personale"
+        />
+      </label>
+      <div className="vocab-edit-actions">
+        <button type="button" className="secondary-button" onClick={onCancel}>
+          <X size={16} />
+          Renunta
+        </button>
+        <button type="button" className="primary-button" disabled={saving} onClick={onSave}>
+          <Check size={16} />
+          {saving ? "Se salveaza..." : "Salveaza modificarile"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function VocabularyView({ books, vocabulary, onRefresh, onNotice }) {
   const [query, setQuery] = useState("");
   const [bookId, setBookId] = useState("");
   const [learnedOverrides, setLearnedOverrides] = useState({});
+  const [editingId, setEditingId] = useState("");
+  const [editDraft, setEditDraft] = useState({});
+  const [savingEdit, setSavingEdit] = useState(false);
   const effectiveVocabulary = useMemo(
     () => vocabulary.map((item) => ({
       ...item,
@@ -1258,6 +1371,7 @@ function VocabularyView({ books, vocabulary, onRefresh }) {
     setLearnedOverrides((current) => ({ ...current, [item.id]: nextLearned }));
     try {
       await api.updateVocabulary(item.id, { learned: nextLearned });
+      if (nextLearned) await api.recordActivity("vocabulary", { count: 1, source: "vocabulary-list" });
       await onRefresh();
     } catch (error) {
       setLearnedOverrides((current) => {
@@ -1267,6 +1381,44 @@ function VocabularyView({ books, vocabulary, onRefresh }) {
       });
       throw error;
     }
+  };
+
+  const startEdit = (item) => {
+    setEditingId(item.id);
+    setEditDraft({
+      translation: item.translation || "",
+      sentence: item.sentence || "",
+      sentenceRo: item.sentenceRo || "",
+      explanation: item.explanation || "",
+      notes: item.notes || "",
+    });
+  };
+
+  const updateDraft = (field, value) => {
+    setEditDraft((current) => ({ ...current, [field]: value }));
+  };
+
+  const saveEdit = async (item) => {
+    setSavingEdit(true);
+    try {
+      await api.updateVocabulary(item.id, editDraft);
+      await onRefresh();
+      setEditingId("");
+      setEditDraft({});
+      onNotice("Vocabularul a fost actualizat.");
+    } catch (error) {
+      onNotice(error.message);
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const exportVocabulary = async (format) => {
+    if (api.exportVocabulary) {
+      await api.exportVocabulary({ format, bookId });
+      return;
+    }
+    window.location.href = api.exportUrl({ format, bookId });
   };
 
   return (
@@ -1294,14 +1446,14 @@ function VocabularyView({ books, vocabulary, onRefresh }) {
             </option>
           ))}
         </select>
-        <a className="secondary-button" href={api.exportUrl({ format: "csv", bookId })}>
+        <button className="secondary-button" type="button" onClick={() => exportVocabulary("csv")}>
           <Download size={16} />
           CSV
-        </a>
-        <a className="secondary-button" href={api.exportUrl({ format: "xlsx", bookId })}>
+        </button>
+        <button className="secondary-button" type="button" onClick={() => exportVocabulary("xlsx")}>
           <Download size={16} />
           Excel
-        </a>
+        </button>
       </div>
 
       <div className="vocab-table">
@@ -1319,15 +1471,37 @@ function VocabularyView({ books, vocabulary, onRefresh }) {
             <div className="vocab-context">
               <p>{item.sentence}</p>
               <p className="muted">{item.sentenceRo}</p>
+              {item.notes && <p className="vocab-notes">{item.notes}</p>}
             </div>
-            <button
-              className="icon-button"
-              onClick={() => markLearned(item)}
-              title={item.learned ? "Marcheaza ca neinvatat" : "Marcheaza invatat"}
-              aria-pressed={item.learned}
-            >
-              <Check size={18} />
-            </button>
+            <div className="vocab-row-actions">
+              <button
+                className="icon-button"
+                onClick={() => startEdit(item)}
+                title="Editeaza traducerea si notitele"
+              >
+                <Pencil size={17} />
+              </button>
+              <button
+                className="icon-button"
+                onClick={() => markLearned(item)}
+                title={item.learned ? "Marcheaza ca neinvatat" : "Marcheaza invatat"}
+                aria-pressed={item.learned}
+              >
+                <Check size={18} />
+              </button>
+            </div>
+            {editingId === item.id && (
+              <VocabularyEditor
+                draft={editDraft}
+                onChange={updateDraft}
+                onCancel={() => {
+                  setEditingId("");
+                  setEditDraft({});
+                }}
+                onSave={() => saveEdit(item)}
+                saving={savingEdit}
+              />
+            )}
           </article>
         ))}
       </div>
@@ -1450,6 +1624,7 @@ function VocabularyLearning({ vocabulary, onRefresh }) {
     if (!card) return;
     setLearnedOverrides((current) => ({ ...current, [card.id]: true }));
     await api.updateVocabulary(card.id, { learned: true });
+    await api.recordActivity("vocabulary", { count: 1, source: "learning-mode" });
     await onRefresh();
     if (cardIndex < group.length - 1) {
       setFlipped(false);
@@ -1473,11 +1648,11 @@ function VocabularyLearning({ vocabulary, onRefresh }) {
           <p>Apasa pe card pentru traducere, apoi marcheaza cuvintele pe care le stapanesti.</p>
         </div>
         <div className="learning-group-picker">
-          <button className="icon-button" disabled={groupIndex === 0} onClick={() => setGroupIndex(groupIndex - 1)}>
+          <button className="icon-button" aria-label="Grupul anterior" disabled={groupIndex === 0} onClick={() => setGroupIndex(groupIndex - 1)}>
             <ChevronLeft size={18} />
           </button>
           <span>Grup {groupIndex + 1} din {groups.length}</span>
-          <button className="icon-button" disabled={groupIndex >= groups.length - 1} onClick={() => setGroupIndex(groupIndex + 1)}>
+          <button className="icon-button" aria-label="Grupul urmator" disabled={groupIndex >= groups.length - 1} onClick={() => setGroupIndex(groupIndex + 1)}>
             <ChevronRight size={18} />
           </button>
         </div>
@@ -1498,17 +1673,9 @@ function VocabularyLearning({ vocabulary, onRefresh }) {
 
           <article
             className={`flashcard ${flipped ? "flipped" : ""}`}
-            role="button"
-            tabIndex={0}
-            onClick={() => setFlipped(!flipped)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                setFlipped(!flipped);
-              }
-            }}
-            aria-label={flipped ? "Afiseaza cuvantul in engleza" : "Afiseaza traducerea in romana"}
           >
+            <button type="button" className="flashcard-flip" onClick={() => setFlipped(!flipped)}
+              aria-label={flipped ? "Afiseaza cuvantul in engleza" : "Afiseaza traducerea in romana"} />
             <div className="flashcard-topline">
               <span>{flipped ? "Traducere" : "Flashcard"}</span>
               <strong>{cardIndex + 1} / {group.length}</strong>
@@ -1598,6 +1765,7 @@ function ChapterQuiz({ books, currentBookId }) {
   const [questionIndex, setQuestionIndex] = useState(0);
   const [answers, setAnswers] = useState({});
   const [finished, setFinished] = useState(false);
+  const [activityLogged, setActivityLogged] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const quizChapters = useMemo(() => {
@@ -1630,6 +1798,7 @@ function ChapterQuiz({ books, currentBookId }) {
     setQuestionIndex(0);
     setAnswers({});
     setFinished(false);
+    setActivityLogged(false);
     try {
       setQuiz(await api.quiz({ bookId, chapterId, model, count }));
     } catch (quizError) {
@@ -1648,6 +1817,17 @@ function ChapterQuiz({ books, currentBookId }) {
     0,
   );
 
+  useEffect(() => {
+    if (!completed || !quiz || activityLogged) return;
+    api.recordActivity("quiz", {
+      score,
+      totalQuestions: questions.length,
+      bookTitle: quiz.bookTitle,
+      chapterTitle: quiz.chapterTitle,
+    }).catch(() => {});
+    setActivityLogged(true);
+  }, [activityLogged, completed, quiz, questions.length, score]);
+
   return (
     <div className="quiz-layout">
       <aside className="quiz-setup">
@@ -1664,8 +1844,8 @@ function ChapterQuiz({ books, currentBookId }) {
         <label>
           Capitol
           <select value={chapterId} onChange={(event) => setChapterId(event.target.value)} disabled={!book}>
-            {quizChapters.map((chapter) => (
-              <option key={chapter.id} value={chapter.id}>{chapter.title}</option>
+            {quizChapters.map((chapter, index) => (
+              <option key={chapter.id} value={chapter.id}>{chapterTitle(chapter, index)}</option>
             ))}
           </select>
         </label>
@@ -1770,10 +1950,19 @@ function ChapterQuiz({ books, currentBookId }) {
   );
 }
 
-function CoachView({ coach, onRefresh, onToggleTask, stats }) {
+function CoachView({ coach: rawCoach, onRefresh, onToggleTask, stats }) {
+  const coach = useMemo(() => normalizeCoach(rawCoach || {}), [rawCoach]);
   const [model, setModel] = useState("gpt");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [selectedDate, setSelectedDate] = useState(() => todayKey());
+  const dateInputRef = useRef(null);
+
+  useEffect(() => {
+    if (coach?.tracker?.today?.date) {
+      setSelectedDate((current) => current || coach.tracker.today.date);
+    }
+  }, [coach?.tracker?.today?.date]);
 
   const regenerate = async () => {
     setBusy(true);
@@ -1786,6 +1975,19 @@ function CoachView({ coach, onRefresh, onToggleTask, stats }) {
       setBusy(false);
     }
   };
+
+  const selectedActivity = coach?.tracker?.activityByDate?.[selectedDate] || {
+    readingMinutes: 0,
+    pagesRead: 0,
+    quizzesCompleted: 0,
+    quizScoreTotal: 0,
+    quizQuestionTotal: 0,
+    vocabularyPracticed: 0,
+    tasksCompleted: 0,
+    books: {},
+    lastQuiz: null,
+  };
+  const selectedProgress = coach?.tracker?.progressByDate?.[selectedDate];
 
   return (
     <section className="coach-layout">
@@ -1832,7 +2034,7 @@ function CoachView({ coach, onRefresh, onToggleTask, stats }) {
                   <strong>{task.title}</strong>
                   <small>{task.detail}</small>
                 </span>
-                <span className="task-time">{task.minutes} min</span>
+                <span className="task-time">{task.minutes ? `${task.minutes} min` : task.time || ""}</span>
               </button>
             ))}
           </div>
@@ -1843,7 +2045,25 @@ function CoachView({ coach, onRefresh, onToggleTask, stats }) {
               <span className="eyebrow">Ritmul tau</span>
               <h2>Progres pe zile</h2>
             </div>
-            <span className="streak-badge">{coach?.tracker?.streak || 0} zile consecutive</span>
+            <div className="streak-tools">
+              <span className="streak-badge">{coach?.tracker?.streak || 0} zile consecutive</span>
+              <button
+                type="button"
+                className="icon-button coach-date-button"
+                title="Alege ziua"
+                onClick={() => dateInputRef.current?.showPicker?.() || dateInputRef.current?.click()}
+              >
+                <CalendarDays size={16} />
+              </button>
+              <input
+                ref={dateInputRef}
+                className="coach-date-input"
+                type="date"
+                aria-label="Ziua din jurnal"
+                value={selectedDate}
+                onChange={(event) => setSelectedDate(event.target.value)}
+              />
+            </div>
           </div>
           <div className="week-progress">
             {(coach?.tracker?.days || []).map((day) => (
@@ -1864,6 +2084,51 @@ function CoachView({ coach, onRefresh, onToggleTask, stats }) {
                 ? (coach.tracker.completedThisWeek / coach.tracker.totalThisWeek) * 100
                 : 0
             } />
+          </div>
+          <div className="coach-day-detail">
+            <div className="section-heading compact">
+              <div>
+                <span className="eyebrow">Jurnal zilnic</span>
+                <h3>{selectedDate}</h3>
+              </div>
+            </div>
+            <div className="coach-day-metrics">
+              <article><span>Timp citire</span><strong>{selectedActivity.readingMinutes} min</strong></article>
+              <article><span>Pagini citite</span><strong>{selectedActivity.pagesRead}</strong></article>
+              <article><span>Quiz-uri</span><strong>{selectedActivity.quizzesCompleted}</strong></article>
+              <article><span>Vocabular exersat</span><strong>{selectedActivity.vocabularyPracticed}</strong></article>
+            </div>
+            {selectedActivity.lastQuiz && (
+              <div className="coach-day-note">
+                <strong>Ultimul quiz</strong>
+                <p>
+                  {selectedActivity.lastQuiz.bookTitle || "Carte"} · {selectedActivity.lastQuiz.chapterTitle || "Capitol"}
+                  {" · "}
+                  {selectedActivity.lastQuiz.score}/{selectedActivity.lastQuiz.totalQuestions}
+                </p>
+              </div>
+            )}
+            {!!Object.keys(selectedActivity.books || {}).length && (
+              <div className="coach-day-note">
+                <strong>Carti citite</strong>
+                <div className="coach-day-books">
+                  {Object.entries(selectedActivity.books).map(([bookId, item]) => (
+                    <span key={bookId}>{item.title}: {item.pagesRead} pag.</span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {selectedProgress?.tasks?.length ? (
+              <div className="coach-day-note">
+                <strong>Task-uri bifate</strong>
+                <p>{selectedProgress.tasks.filter((task) => task.completed).length}/{selectedProgress.tasks.length}</p>
+              </div>
+            ) : (
+              <div className="coach-day-note">
+                <strong>Task-uri bifate</strong>
+                <p>Nu exista activitate salvata pentru aceasta zi.</p>
+              </div>
+            )}
           </div>
         </section>
       </div>
@@ -1890,7 +2155,7 @@ function CoachView({ coach, onRefresh, onToggleTask, stats }) {
             <article key={`${item.title}-${index}`}>
               <span>{index + 1}</span>
               <div><strong>{item.title}</strong><p>{item.detail}</p></div>
-              <small>{item.minutes} min</small>
+              <small>{item.minutes ? `${item.minutes} min` : item.time || ""}</small>
             </article>
           ))}
         </div>
@@ -1902,8 +2167,8 @@ function CoachView({ coach, onRefresh, onToggleTask, stats }) {
         <div className="coach-focus-grid">
           {(coach?.focusAreas || []).map((area) => (
             <article key={area.title}>
-              <div><strong>{area.title}</strong><span>{area.score}%</span></div>
-              <ProgressBar value={area.score} />
+              <div><strong>{area.title}</strong>{area.score !== null && <span>{area.score}%</span>}</div>
+              {area.score !== null && <ProgressBar value={area.score} />}
               <p>{area.detail}</p>
             </article>
           ))}
